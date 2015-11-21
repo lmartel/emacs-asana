@@ -22,7 +22,7 @@
                                             (buffer-string))))
          (errs (assoc 'errors response)))
     (if errs
-        (error (concat "Asana API error: " (mapconcat #'(lambda (err) (cdr (assoc 'message err))) (cdr errs) "\n")))
+        (error (concat "Asana API error: " (mapconcat (lambda (err) (cdr (assoc 'message err))) (cdr errs) "\n")))
       (cdr (assoc 'data response)))))
 
 (defun asana-get (resource &optional params)
@@ -54,7 +54,7 @@
 
 (defun asana-task-helm-source ()
   `((name . ,(concat "My Asana Tasks in " asana-workspace-name))
-    (candidates . ,(mapcar #'asana-task-helm-data (asana-get-tasks)))
+    (candidates . ,(mapcar 'asana-task-helm-data (asana-get-tasks)))
     (action . (("Select" . asana-task-select)
                ("Open in Asana" . asana-task-browse)
                ("Complete" . asana-task-complete)
@@ -78,7 +78,7 @@
 
 (defun asana-workspace-helm-source ()
   `((name . "Asana Workspaces")
-    (candidates . ,(mapcar #'asana-workspace-helm-data (asana-get-workspaces)))
+    (candidates . ,(mapcar 'asana-workspace-helm-data (asana-get-workspaces)))
     (action . (("Select" . asana-workspace-select)))))
 
 (defun asana-workspace-helm-data (workspace)
