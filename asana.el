@@ -6,8 +6,17 @@
 
 (defconst asana-api-root "https://app.asana.com/api/1.0")
 (defconst asana-token (getenv "ASANA_TOKEN"))
-(defvar asana-user-id nil)
 (defvar asana-workspace-id nil)
+
+;; Helpers
+
+(setq debug-on-error t)
+
+(defun asana-compose (a b)
+  (lexical-let ((a a)
+                (b b))
+    (lambda (&rest args)
+      (funcall a (apply b args)))))
 
 ;; API
 
@@ -25,7 +34,20 @@
         (error (concat "Asana API error: " (mapconcat (lambda (err) (cdr (assoc 'message err))) (cdr errs) "\n")))
       (cdr (assoc 'data response)))))
 
-(defun asana-get (resource &optional params)
+(defun asana-read-response-async (status)
+  (asana-read-response (current-buffer)))
+
+(defun asana-put (resource &optional params callback) ; TODO refactor with macro
+  (let ((url-request-method "PUT")
+        (url-request-extra-headers (asana-headers-with-auth))
+        (url-request-data (json-encode `(("data" . ,params))))
+        (url (concat asana-api-root resource)))
+    (if nil
+        (url-retrieve url (lambda (result)
+                            (callback (asana-read-response (result)))))
+      (asana-read-response (url-retrieve-synchronously url)))))
+
+(defun asana-get (resource &optional params callback)
   (let ((url-request-method "GET")
         (url-request-extra-headers (asana-headers-with-auth))
         (url (concat asana-api-root
@@ -37,18 +59,27 @@
                                           (url-hexify-string (cdr param))))
                                 params
                                 "&"))))
-    (asana-read-response (url-retrieve-synchronously url))))
+    (if callback
+        (url-retrieve url (asana-compose callback 'asana-read-response-async))
+      (asana-read-response (url-retrieve-synchronously url)))))
 
-(defun asana-get-workspaces ()
-  (let ((data (asana-get "/users/me")))
-    (customize-save-variable 'asana-user-id (cdr (assoc 'id data)))
-    (cdr (assoc 'workspaces data))))
+(defun asana-get-workspaces (&optional callback)
+  (cdr (assoc 'workspaces (asana-get "/users/me" nil callback))))
 
-(defun asana-get-tasks ()
-  (asana-get "/tasks" `(("assignee" . ,(number-to-string asana-user-id))
-                        ("workspace" . ,(number-to-string asana-workspace-id))
-                        ("limit" . "100")
-                        ("completed_since" . "now"))))
+(defun asana-get-tasks (&optional callback)
+  (remove-if (lambda (task) (equal (cdr (assoc 'assignee_status task)) "later"))
+             (asana-get "/tasks" `(("workspace" . ,(number-to-string asana-workspace-id))
+                                   ("opt_fields" . "id,name,assignee_status")
+                                   ("limit" . "100")
+                                   ("assignee" . "me")
+                                   ("completed_since" . "now"))
+                        callback)))
+
+(defun asana-get-task (task-id &optional callback)
+  (asana-get (concat "/tasks/" (number-to-string task-id)) nil callback))
+
+(defun asana-get-task-stories (task-id &optional callback)
+  (asana-get (concat "/tasks/" (number-to-string task-id) "/stories") nil callback))
 
 ;; Helm
 
@@ -64,13 +95,27 @@
   `(,(cdr (assoc 'name task)) . ,(cdr (assoc 'id task))))
 
 (defun asana-task-select (task-id)
-  (print task-id)) ; TODO
+  (lexical-let ((task-id task-id))
+    (asana-get-task task-id (lambda (result)
+                              (with-output-to-temp-buffer "*Task*"
+                                (with-current-buffer "*Task*"
+                                  (cl-prettyprint result)
+                                  (insert "\n\n===== COMMENTS =====\n")
+                                  (cl-prettyprint (asana-get-task-stories task-id))))))))
 
 (defun asana-task-browse (task-id)
-  (print task-id)) ; TODO
+  (browse-url (concat "https://app.asana.com/0/"
+                      (number-to-string asana-workspace-id)
+                      "/"
+                      (number-to-string task-id))))
 
 (defun asana-task-complete (task-id)
-  (print task-id)) ; TODO
+  (let* ((response (asana-put (concat "/tasks/" (number-to-string task-id))
+                              '(("completed" . t))))
+         (task-name (cdr (assoc 'name response))))
+    (if (assoc 'completed response)
+        (message "`%s' completed." task-name)
+      (message "Unknown error: couldn't complete `%s'" task-name))))
 
 (defun asana-task-delete (task-id)
   (print task-id)) ; TODO
