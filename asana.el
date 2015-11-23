@@ -53,8 +53,8 @@
         (url-retrieve url (asana-compose callback 'asana-read-response-async))
       (asana-read-response (url-retrieve-synchronously url)))))
 
-(defun asana-put (resource &optional params callback)
-  (let ((url-request-method "PUT")
+(defun asana-request (method resource params callback)
+  (let ((url-request-method method)
         (url-request-extra-headers (asana-headers-with-auth))
         (url-request-data (json-encode `(("data" . ,params))))
         (url (concat asana-api-root resource)))
@@ -62,14 +62,15 @@
         (url-retrieve url (asana-compose callback 'asana-read-response-async))
       (asana-read-response (url-retrieve-synchronously url)))))
 
+(defun asana-post (resource &optional params callback)
+  (asana-request "POST" resource params callback))
+
+(defun asana-put (resource &optional params callback)
+  (asana-request "PUT" resource params callback))
+
 (defun asana-delete (resource &optional params callback)
-  (let ((url-request-method "DELETE")
-        (url-request-extra-headers (asana-headers-with-auth))
-        (url-request-data (json-encode `(("data" . ,params))))
-        (url (concat asana-api-root resource)))
-    (if callback
-        (url-retrieve url (asana-compose callback 'asana-read-response-async))
-      (asana-read-response (url-retrieve-synchronously url)))))
+  (asana-request "DELETE" resource params callback))
+
 
 (defun asana-get-workspaces (&optional callback)
   (cdr (assoc 'workspaces (asana-get "/users/me" nil callback))))
@@ -148,6 +149,11 @@
   (helm-asana))
 
 ;; Interactive
+
+(defun asana-new-task (task-name)
+  "TODO docstring"
+  (interactive "sCreate Asana Task: ")
+  (print arg))
 
 (defun helm-asana ()
   "TODO docstring"
