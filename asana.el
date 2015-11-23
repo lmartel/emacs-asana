@@ -37,14 +37,13 @@
 (defun asana-read-response-async (status)
   (asana-read-response (current-buffer)))
 
-(defun asana-put (resource &optional params callback) ; TODO refactor with macro
+(defun asana-put (resource &optional params callback)
   (let ((url-request-method "PUT")
         (url-request-extra-headers (asana-headers-with-auth))
         (url-request-data (json-encode `(("data" . ,params))))
         (url (concat asana-api-root resource)))
-    (if nil
-        (url-retrieve url (lambda (result)
-                            (callback (asana-read-response (result)))))
+    (if callback
+        (url-retrieve url (asana-compose callback 'asana-read-response-async))
       (asana-read-response (url-retrieve-synchronously url)))))
 
 (defun asana-get (resource &optional params callback)
@@ -110,12 +109,13 @@
                       (number-to-string task-id))))
 
 (defun asana-task-complete (task-id)
-  (let* ((response (asana-put (concat "/tasks/" (number-to-string task-id))
-                              '(("completed" . t))))
-         (task-name (cdr (assoc 'name response))))
-    (if (assoc 'completed response)
-        (message "`%s' completed." task-name)
-      (message "Unknown error: couldn't complete `%s'" task-name))))
+  (asana-put (concat "/tasks/" (number-to-string task-id))
+             '(("completed" . t))
+             (lambda (response)
+               (let ((task-name (cdr (assoc 'name response))))
+                 (if (assoc 'completed response)
+                     (message "`%s' completed." task-name)
+                   (message "Unknown error: couldn't complete `%s'" task-name))))))
 
 (defun asana-task-delete (task-id)
   (print task-id)) ; TODO
