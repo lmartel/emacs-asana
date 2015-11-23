@@ -14,6 +14,7 @@
 (defconst asana-token (getenv "ASANA_TOKEN"))
 (defvar asana-workspace-id nil)
 (defvar asana-workspace-name nil)
+(defvar asana-task-cache nil)
 
 ;; Helpers
 
@@ -47,6 +48,9 @@
                 (b b))
     (lambda (&rest args)
       (funcall a (apply b args)))))
+
+(defun asana-filter-later (tasks)
+  (remove-if (lambda (task) (equal (cdr (assoc 'assignee_status task)) "later")) tasks))
 
 (defun asana-headers-with-auth (&optional extra-headers)
   (append `(("Authorization" . ,(concat "Bearer " asana-token))) extra-headers))
@@ -106,13 +110,12 @@
   (cdr (assoc 'workspaces (asana-get "/users/me" nil callback))))
 
 (defun asana-get-tasks (&optional callback)
-  (remove-if (lambda (task) (equal (cdr (assoc 'assignee_status task)) "later"))
-             (asana-get "/tasks" `(("workspace" . ,(number-to-string asana-workspace-id))
-                                   ("opt_fields" . "id,name,assignee_status")
-                                   ("limit" . "100")
-                                   ("assignee" . "me")
-                                   ("completed_since" . "now"))
-                        callback)))
+  (asana-get "/tasks" `(("workspace" . ,(number-to-string asana-workspace-id))
+                        ("opt_fields" . "id,name,assignee_status")
+                        ("limit" . "100")
+                        ("assignee" . "me")
+                        ("completed_since" . "now"))
+             callback))
 
 (defun asana-get-task (task-id &optional callback)
   (asana-get (concat "/tasks/" (number-to-string task-id)) nil callback))
@@ -120,11 +123,22 @@
 (defun asana-get-task-stories (task-id &optional callback)
   (asana-get (concat "/tasks/" (number-to-string task-id) "/stories") nil callback))
 
+;; Caching
+
+(defun asana-clear-task-cache ()
+  (setq asana-task-cache nil))
+
+(defun asana-invalidate-task-cache ()
+  (asana-get-tasks (lambda (tasks)
+                     (setq asana-task-cache (mapcar 'asana-task-helm-data (asana-filter-later tasks)))
+                     (and helm-alive-p (helm-update)))))
+
 ;; Helm
 
 (defun asana-task-helm-source ()
   `((name . ,(concat "My Asana Tasks in " asana-workspace-name))
-    (candidates . ,(mapcar 'asana-task-helm-data (asana-get-tasks)))
+    (candidates . ,(lambda () asana-task-cache))
+    (volatile)
     (action . (("Select `RET'" . asana-task-select)
                ("Browse (open in Asana) `C-b'" . asana-task-browse)
                ("Complete `C-RET'" . asana-task-complete)
@@ -224,8 +238,9 @@
   "TODO docstring"
   (interactive)
   (if asana-workspace-id
-      (helm :sources (asana-task-helm-source)
-            :buffer "*helm-asana*")
+      (progn (asana-invalidate-task-cache)
+             (helm :sources (asana-task-helm-source)
+                   :buffer "*helm-asana*"))
     (helm :sources (asana-workspace-helm-source)
           :buffer "*helm-asana*")))
 
@@ -233,6 +248,7 @@
   "TODO docstring"
   (interactive)
   (customize-save-variable 'asana-workspace-id nil)
+  (asana-clear-task-cache)
   (helm-asana))
 
 (provide 'asana)
