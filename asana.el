@@ -18,8 +18,6 @@
     (lambda (&rest args)
       (funcall a (apply b args)))))
 
-;; API
-
 (defun asana-headers-with-auth (&optional extra-headers)
   (append `(("Authorization" . ,(concat "Bearer " asana-token))) extra-headers))
 
@@ -37,16 +35,9 @@
 (defun asana-read-response-async (status)
   (asana-read-response (current-buffer)))
 
-(defun asana-put (resource &optional params callback)
-  (let ((url-request-method "PUT")
-        (url-request-extra-headers (asana-headers-with-auth))
-        (url-request-data (json-encode `(("data" . ,params))))
-        (url (concat asana-api-root resource)))
-    (if callback
-        (url-retrieve url (asana-compose callback 'asana-read-response-async))
-      (asana-read-response (url-retrieve-synchronously url)))))
+;; API
 
-(defun asana-get (resource &optional params callback)
+(defun asana-get (resource &optional params callback) ; TODO: refactor HTTP funcs with macro
   (let ((url-request-method "GET")
         (url-request-extra-headers (asana-headers-with-auth))
         (url (concat asana-api-root
@@ -58,6 +49,24 @@
                                           (url-hexify-string (cdr param))))
                                 params
                                 "&"))))
+    (if callback
+        (url-retrieve url (asana-compose callback 'asana-read-response-async))
+      (asana-read-response (url-retrieve-synchronously url)))))
+
+(defun asana-put (resource &optional params callback)
+  (let ((url-request-method "PUT")
+        (url-request-extra-headers (asana-headers-with-auth))
+        (url-request-data (json-encode `(("data" . ,params))))
+        (url (concat asana-api-root resource)))
+    (if callback
+        (url-retrieve url (asana-compose callback 'asana-read-response-async))
+      (asana-read-response (url-retrieve-synchronously url)))))
+
+(defun asana-delete (resource &optional params callback)
+  (let ((url-request-method "DELETE")
+        (url-request-extra-headers (asana-headers-with-auth))
+        (url-request-data (json-encode `(("data" . ,params))))
+        (url (concat asana-api-root resource)))
     (if callback
         (url-retrieve url (asana-compose callback 'asana-read-response-async))
       (asana-read-response (url-retrieve-synchronously url)))))
@@ -118,8 +127,12 @@
                    (message "Unknown error: couldn't complete `%s'" task-name))))))
 
 (defun asana-task-delete (task-id)
-  (print task-id)) ; TODO
-
+  (asana-delete (concat "/tasks/" (number-to-string task-id))
+                nil
+                (lambda (data)
+                  (if data
+                      (message "Unknown error: couldn't delete task.")
+                    (message "Task deleted.")))))
 
 (defun asana-workspace-helm-source ()
   `((name . "Asana Workspaces")
