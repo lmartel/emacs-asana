@@ -2,6 +2,13 @@
 (require 'url)
 (require 'url-http)
 
+;; User config variables
+
+(defvar asana-keymap-prefix "C-c a")
+
+
+;; Internal variables
+
 (exec-path-from-shell-copy-env "ASANA_TOKEN")
 
 (defconst asana-api-root "https://app.asana.com/api/1.0")
@@ -11,6 +18,29 @@
 ;; Helpers
 
 (setq debug-on-error t)
+
+;; From https://github.com/bbatsov/projectile/blob/master/helm-projectile.el#L77
+(defmacro asana-define-key (keymap key def &rest bindings)
+  "In KEYMAP, define key sequence KEY1 as DEF1, KEY2 as DEF2 ..."
+  (declare (indent defun))
+  (let ((ret '(progn)))
+    (while key
+      (push
+       `(define-key ,keymap ,key
+          (lambda ()
+            (interactive)
+            (helm-exit-and-execute-action ,def)))
+       ret)
+      (setq key (pop bindings)
+            def (pop bindings)))
+    (reverse ret)))
+
+(defmacro asana-exec-marked (candidate-func)
+  `(lambda (unused-selection)
+     (mapcar ,candidate-func (helm-marked-candidates))))
+
+(defun asana-kbd (keyseq)
+  (kbd (concat asana-keymap-prefix " " keyseq)))
 
 (defun asana-compose (a b)
   (lexical-let ((a a)
@@ -95,10 +125,21 @@
 (defun asana-task-helm-source ()
   `((name . ,(concat "My Asana Tasks in " asana-workspace-name))
     (candidates . ,(mapcar 'asana-task-helm-data (asana-get-tasks)))
-    (action . (("Select" . asana-task-select)
-               ("Open in Asana" . asana-task-browse)
-               ("Complete" . asana-task-complete)
-               ("Delete" . asana-task-delete)))))
+    (action . (("Select `RET'" . asana-task-select)
+               ("Browse (open in Asana) `C-b'" . asana-task-browse)
+               ("Complete `C-RET'" . asana-task-complete)
+               ("Delete `C-DEL'" . asana-task-delete)
+               ("Complete marked Tasks `M-RET'" . (asana-exec-marked 'asana-task-complete))
+               ("Delete marked Tasks `M-DEL'" . (asana-exec-marked 'asana-task-delete))))
+    (keymap . ,(let ((map (make-sparse-keymap)))
+                 (set-keymap-parent map helm-map)
+                 (asana-define-key map
+                   (kbd "C-b") 'asana-task-browse
+                   (kbd "<C-return>") 'asana-task-complete
+                   (kbd "<C-backspace>") 'asana-task-delete
+                   (kbd "<M-return>") (asana-exec-marked 'asana-task-complete)
+                   (kbd "<M-backspace>") (asana-exec-marked 'asana-task-delete))
+                 map))))
 
 (defun asana-task-helm-data (task)
   `(,(cdr (assoc 'name task)) . ,(cdr (assoc 'id task))))
@@ -121,9 +162,9 @@
 (defun asana-task-complete (task-id)
   (asana-put (concat "/tasks/" (number-to-string task-id))
              '(("completed" . t))
-             (lambda (response)
-               (let ((task-name (cdr (assoc 'name response))))
-                 (if (assoc 'completed response)
+             (lambda (data)
+               (let ((task-name (cdr (assoc 'name data))))
+                 (if (assoc 'completed data)
                      (message "`%s' completed." task-name)
                    (message "Unknown error: couldn't complete `%s'" task-name))))))
 
@@ -150,10 +191,34 @@
 
 ;; Interactive
 
-(defun asana-new-task (task-name)
+(define-minor-mode asana-mode
   "TODO docstring"
-  (interactive "sCreate Asana Task: ")
-  (print arg))
+  nil
+  " ∴"
+  `((,(asana-kbd "<return>") . helm-asana)
+    (,(asana-kbd "a") . helm-asana)
+    (,(asana-kbd "A") . helm-asana-change-workspace)
+    (,(asana-kbd "c") . asana-create-task-quickly)
+    (,(asana-kbd "C") . asana-create-task))
+  :group 'asana)
+
+(defun asana-create-task (task-name &optional description)
+  "TODO docstring"
+  (interactive "sCreate Asana Task: \nsTask Description: ")
+  (asana-post "/tasks" `(("name" . ,task-name)
+                         ("notes" . ,(or description ""))
+                         ("assignee" . "me")
+                         ("workspace" . ,(number-to-string asana-workspace-id)))
+              (lambda (data)
+                (let ((task-name (cdr (assoc 'name data))))
+                  (if task-name
+                      (message "Created task: `%s'." task-name)
+                    (message "Unknown error: couldn't create task."))))))
+
+(defun asana-create-task-quickly (task-name)
+  "TODO docstring"
+  (interactive "sQuick-Create Asana Task: ")
+  (asana-create-task task-name))
 
 (defun helm-asana ()
   "TODO docstring"
