@@ -6,7 +6,6 @@
 
 (defvar asana-keymap-prefix "C-c a")
 
-
 ;; Internal variables
 
 (exec-path-from-shell-copy-env "ASANA_TOKEN")
@@ -14,6 +13,7 @@
 (defconst asana-api-root "https://app.asana.com/api/1.0")
 (defconst asana-token (getenv "ASANA_TOKEN"))
 (defvar asana-workspace-id nil)
+(defvar asana-workspace-name nil)
 
 ;; Helpers
 
