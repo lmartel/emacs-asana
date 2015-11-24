@@ -17,8 +17,6 @@
 
 ;; Helpers
 
-(setq debug-on-error t)
-
 ;; From https://github.com/bbatsov/projectile/blob/master/helm-projectile.el#L77
 (defmacro asana-define-key (keymap key def &rest bindings)
   "In KEYMAP, define key sequence KEY1 as DEF1, KEY2 as DEF2 ..."
