@@ -142,8 +142,8 @@
                ("Browse (open in Asana) `C-b'" . asana-task-browse)
                ("Complete `C-RET'" . asana-task-complete)
                ("Delete `C-DEL'" . asana-task-delete)
-               ("Complete marked Tasks `M-RET'" . (asana-exec-marked 'asana-task-complete))
-               ("Delete marked Tasks `M-DEL'" . (asana-exec-marked 'asana-task-delete))))
+               ("Complete marked Tasks `M-RET'" . ,(asana-exec-marked 'asana-task-complete))
+               ("Delete marked Tasks `M-DEL'" . ,(asana-exec-marked 'asana-task-delete))))
     (keymap . ,(let ((map (make-sparse-keymap)))
                  (set-keymap-parent map helm-map)
                  (asana-define-key map
