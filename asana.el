@@ -213,6 +213,8 @@
     (,(asana-kbd "C") . asana-create-task))
   :group 'asana)
 
+(define-globalized-minor-mode global-asana-mode asana-mode asana-mode)
+
 (defun asana-create-task (task-name &optional description)
   "TODO docstring"
   (interactive "sCreate Asana Task: \nsTask Description: ")
