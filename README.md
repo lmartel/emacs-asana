@@ -13,9 +13,9 @@ Add this to your `init.el`:
 ```elisp
 (global-asana-mode 1)
 ;; or, if you prefer, use it in specific major modes:
-(add-hook 'org-mode-hook 'asana-mode)
-(add-hook 'prog-mode-hook 'asana-mode)
-(add-hook 'text-mode-hook 'asana-mode)
+;; (add-hook 'org-mode-hook 'asana-mode)
+;; (add-hook 'prog-mode-hook 'asana-mode)
+;; (add-hook 'text-mode-hook 'asana-mode)
 ```
 
 ### Configuration
