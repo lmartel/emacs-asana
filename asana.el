@@ -205,7 +205,7 @@
 (define-minor-mode asana-mode
   "TODO docstring"
   nil
-  " ∴"
+  " ⸫"
   `((,(asana-kbd "<return>") . helm-asana)
     (,(asana-kbd "a") . helm-asana)
     (,(asana-kbd "A") . helm-asana-change-workspace)
