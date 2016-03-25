@@ -6,14 +6,13 @@
 
 (defvar asana-keymap-prefix "C-c a")
 (exec-path-from-shell-copy-env "ASANA_TOKEN")
-(exec-path-from-shell-copy-env "ASANA_ATM_ID")
 
 ;; Internal variables
 
 (defconst asana-api-root "https://app.asana.com/api/1.0")
 (defconst asana-token (getenv "ASANA_TOKEN"))
-(defconst asana-my-tasks-project-id (getenv "ASANA_ATM_ID")) ; TODO way to get this thru API?
 
+(defvar asana-my-tasks-project-id nil)
 (defvar asana-selected-workspace nil)
 (defvar asana-selected-section nil)
 (defvar asana-selected-task nil)
@@ -224,7 +223,7 @@
                `(("assignee_status" . ,(asana-assocdr 'assignee_status section))))
     (asana-post (concat "/tasks/" task-sid "/addProject")
                 `(("project" . ,asana-my-tasks-project-id)
-                  ("section" . ,(asana-assocdr 'id section)))
+                  ("section" . ,(asana-assocdr 'id section))) ; TODO in theory you can pass assignee_status here instead
                 (lambda (data)
                   (if data
                       (message "Unknown error: couldn't move task.")
@@ -257,6 +256,10 @@
 
 (defun asana-workspace-select (workspace)
   (customize-save-variable 'asana-selected-workspace workspace)
+  (asana-get "/users/me" `(("workspace" . ,(number-to-string (asana-assocdr 'id asana-selected-workspace)))
+                           ("opt_fields" . "atm_id"))
+             (lambda (data)
+               (setq asana-my-tasks-project-id (asana-assocdr 'atm_id data))))
   (helm-asana))
 
 ;; Interactive
