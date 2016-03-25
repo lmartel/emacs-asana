@@ -14,10 +14,9 @@
 (defconst asana-token (getenv "ASANA_TOKEN"))
 (defconst asana-my-tasks-project-id (getenv "ASANA_ATM_ID")) ; TODO way to get this thru API?
 
-(defvar asana-selected-workspace-id nil)
-(defvar asana-selected-workspace-name nil)
-(defvar asana-selected-section-name nil)
-(defvar asana-selected-task-id nil)
+(defvar asana-selected-workspace nil)
+(defvar asana-selected-section nil)
+(defvar asana-selected-task nil)
 (defvar asana-task-cache nil)
 (defvar asana-section-cache nil)
 
@@ -43,6 +42,9 @@
   `(lambda (unused-selection)
      (mapcar ,candidate-func (helm-marked-candidates))))
 
+(defmacro asana-assocdr (key alist)
+  `(cdr (assoc ,key ,alist)))
+
 (defun asana-kbd (keyseq)
   (kbd (concat asana-keymap-prefix " " keyseq)))
 
@@ -53,23 +55,24 @@
       (funcall a (apply b args)))))
 
 (defun asana-filter-later (tasks)
-  (remove-if (lambda (task) (equal (cdr (assoc 'assignee_status task)) "later")) tasks))
+  (remove-if (lambda (task) (equal (asana-assocdr 'assignee_status task) "later")) tasks))
 
 (defun asana-fold-sections (tasks)
-  (let ((prev-section asana-selected-section-name))
-    (setq asana-selected-section-name nil)
+  (let ((prev-section (asana-assocdr 'name asana-selected-section)))
+    (setq asana-selected-section nil)
     (let ((tasks-with-sections (mapcar (lambda (task)
-                                         (let ((task-name (cdr (assoc 'name task))))
+                                         (let ((task-name (asana-assocdr 'name task)))
                                            (cond ((string-suffix-p ":" task-name)
-                                                  (setq asana-selected-section-name task-name)
+                                                  (setq asana-selected-section task)
+                                                  (add-to-list 'asana-section-cache (asana-section-helm-data task))
                                                   nil)
-                                                 (asana-selected-section-name
-                                                  (cons `(name . ,(concat "[" asana-selected-section-name "] " task-name)) task))
+                                                 (asana-selected-section
+                                                  (cons `(name . ,(concat "[" (asana-assocdr 'name asana-selected-section) "] " task-name)) task))
                                                  (t
                                                   task))))
                                        tasks)))
-      (setq asana-selected-section-name prev-section)
-      (remove-if 'null tasks-with-sections)))) ; filter nil
+      (setq asana-selected-section prev-section)
+      (remove-if 'null tasks-with-sections))))
 
 (defun asana-headers-with-auth (&optional extra-headers)
   (append `(("Authorization" . ,(concat "Bearer " asana-token))) extra-headers))
@@ -82,8 +85,8 @@
                                             (buffer-string))))
          (errs (assoc 'errors response)))
     (if errs
-        (error (concat "Asana API error: " (mapconcat (lambda (err) (cdr (assoc 'message err))) (cdr errs) "\n")))
-      (cdr (assoc 'data response)))))
+        (error (concat "Asana API error: " (mapconcat (lambda (err) (asana-assocdr 'message err)) (cdr errs) "\n")))
+      (asana-assocdr 'data response))))
 
 (defun asana-read-response-async (status)
   (asana-read-response (current-buffer)))
@@ -126,14 +129,15 @@
 
 
 (defun asana-get-workspaces (&optional callback)
-  (cdr (assoc 'workspaces (asana-get "/users/me" nil callback))))
+  (asana-assocdr 'workspaces (asana-get "/users/me" nil callback)))
 
+;; unused
 (defun asana-get-sections (&optional callback)
   (asana-get (concat "/projects/" asana-my-tasks-project-id "/sections") `(("limit" . "100"))
              callback))
 
 (defun asana-get-tasks (&optional callback)
-  (asana-get "/tasks" `(("workspace" . ,(number-to-string asana-selected-workspace-id))
+  (asana-get "/tasks" `(("workspace" . ,(number-to-string (asana-assocdr 'id asana-selected-workspace)))
                         ("opt_fields" . "id,name,assignee_status")
                         ("limit" . "100")
                         ("assignee" . "me")
@@ -153,16 +157,14 @@
 
 (defun asana-invalidate-task-cache ()
   (asana-get-tasks (lambda (tasks)
-                     (setq asana-task-cache (mapcar 'asana-item-helm-data (asana-fold-sections (asana-filter-later tasks))))
+                     (setq asana-task-cache (mapcar 'asana-task-helm-data (asana-fold-sections (asana-filter-later tasks))))
                      (and helm-alive-p (helm-update))))
-  (asana-get-sections (lambda (sections)
-                        (setq asana-section-cache (mapcar 'asana-item-helm-data sections))
-                        (and helm-alive-p (helm-update)))))
+  (setq asana-section-cache nil))
 
 ;; Helm
 
 (defun asana-task-helm-source ()
-  `((name . ,(concat "My Asana Tasks in " asana-selected-workspace-name))
+  `((name . ,(concat "My Asana Tasks in " (asana-assocdr 'name asana-selected-workspace)))
     (candidates . ,(lambda () asana-task-cache))
     (volatile)
     (action . (("Select `RET'" . asana-task-select)
@@ -189,8 +191,11 @@
     (volatile)
     (action . (("Select `RET'" . asana-section-select)))))
 
-(defun asana-item-helm-data (task)
-  `(,(cdr (assoc 'name task)) . ,(cdr (assoc 'id task))))
+(defun asana-task-helm-data (task)
+  `(,(asana-assocdr 'name task) . ,(asana-assocdr 'id task)))
+
+(defun asana-section-helm-data (section)
+  `(,(asana-assocdr 'name section) . ,section))
 
 (defun asana-task-select (task-id)
   (lexical-let ((task-id task-id))
@@ -203,30 +208,33 @@
 
 (defun asana-task-browse (task-id)
   (browse-url (concat "https://app.asana.com/0/"
-                      (number-to-string asana-selected-workspace-id)
+                      (number-to-string (asana-assocdr 'id asana-selected-workspace))
                       "/"
                       (number-to-string task-id))))
 
 (defun asana-task-move-to-section (task-id)
-  (setq asana-selected-task-id task-id)
+  (setq asana-selected-task `((id . ,task-id)))
   (helm :sources (asana-section-helm-source)
         :buffer "*helm-asana*")
-  (setq asana-selected-task-id nil))
+  (setq asana-selected-task nil))
 
-(defun asana-section-select (section-id)
-  (asana-post (concat "/tasks/" (number-to-string asana-selected-task-id) "/addProject")
-              `(("project" . ,asana-my-tasks-project-id)
-                ("section" . ,section-id))
-              (lambda (data)
-                (if data
-                    (message "Unknown error: couldn't move task.")
-                  (message "Task moved.")))))
+(defun asana-section-select (section)
+  (let ((task-sid (number-to-string (asana-assocdr 'id asana-selected-task))))
+    (asana-put (concat "/tasks/" task-sid)
+               `(("assignee_status" . ,(asana-assocdr 'assignee_status section))))
+    (asana-post (concat "/tasks/" task-sid "/addProject")
+                `(("project" . ,asana-my-tasks-project-id)
+                  ("section" . ,(asana-assocdr 'id section)))
+                (lambda (data)
+                  (if data
+                      (message "Unknown error: couldn't move task.")
+                    (message "Task moved."))))))
 
 (defun asana-task-complete (task-id)
   (asana-put (concat "/tasks/" (number-to-string task-id))
              '(("completed" . t))
              (lambda (data)
-               (let ((task-name (cdr (assoc 'name data))))
+               (let ((task-name (asana-assocdr 'name data)))
                  (if (assoc 'completed data)
                      (message "`%s' completed." task-name)
                    (message "Unknown error: couldn't complete `%s'" task-name))))))
@@ -245,11 +253,10 @@
     (action . (("Select" . asana-workspace-select)))))
 
 (defun asana-workspace-helm-data (workspace)
-  `(,(cdr (assoc 'name workspace)) . ,workspace))
+  `(,(asana-assocdr 'name workspace) . ,workspace))
 
 (defun asana-workspace-select (workspace)
-  (customize-save-variable 'asana-selected-workspace-id (cdr (assoc 'id workspace)))
-  (customize-save-variable 'asana-selected-workspace-name (cdr (assoc 'name workspace)))
+  (customize-save-variable 'asana-selected-workspace workspace)
   (helm-asana))
 
 ;; Interactive
@@ -273,9 +280,9 @@
   (asana-post "/tasks" `(("name" . ,task-name)
                          ("notes" . ,(or description ""))
                          ("assignee" . "me")
-                         ("workspace" . ,(number-to-string asana-selected-workspace-id)))
+                         ("workspace" . ,(number-to-string (asana-assocdr 'id asana-selected-workspace))))
               (lambda (data)
-                (let ((task-name (cdr (assoc 'name data))))
+                (let ((task-name (asana-assocdr 'name data)))
                   (if task-name
                       (message "Created task: `%s'." task-name)
                     (message "Unknown error: couldn't create task."))))))
@@ -288,7 +295,7 @@
 (defun helm-asana ()
   "TODO docstring"
   (interactive)
-  (if asana-selected-workspace-id
+  (if asana-selected-workspace
       (progn (asana-invalidate-task-cache)
              (helm :sources (asana-task-helm-source)
                    :buffer "*helm-asana*"))
@@ -298,7 +305,7 @@
 (defun helm-asana-change-workspace ()
   "TODO docstring"
   (interactive)
-  (customize-save-variable 'asana-selected-workspace-id nil)
+  (customize-save-variable 'asana-selected-workspace nil)
   (asana-clear-task-cache)
   (helm-asana))
 
