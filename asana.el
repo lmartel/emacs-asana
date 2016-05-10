@@ -259,7 +259,7 @@
   (asana-get "/users/me" `(("workspace" . ,(number-to-string (asana-assocdr 'id asana-selected-workspace)))
                            ("opt_fields" . "atm_id"))
              (lambda (data)
-               (setq asana-my-tasks-project-id (asana-assocdr 'atm_id data))))
+               (customize-save-variable 'asana-my-tasks-project-id (asana-assocdr 'atm_id data))))
   (helm-asana))
 
 ;; Interactive
