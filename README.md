@@ -54,6 +54,7 @@ Browse (open in Asana) [C-b]
 Move to section [C-:]
 Complete [C-RET]
 Delete [C-DEL]
+Move all marked tasks to section [M-:]
 Complete all marked tasks [M-RET]
 Delete all marked tasks [M-DEL]
 ```
