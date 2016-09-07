@@ -15,7 +15,7 @@
 (defvar asana-my-tasks-project-id nil)
 (defvar asana-selected-workspace nil)
 (defvar asana-selected-section nil)
-(defvar asana-selected-task nil)
+(defvar asana-selected-task-ids nil)
 (defvar asana-task-cache nil)
 (defvar asana-section-cache nil)
 
@@ -37,9 +37,15 @@
             def (pop bindings)))
     (reverse ret)))
 
-(defmacro asana-exec-marked (candidate-func)
+(defmacro asana-map-marked (candidate-func)
   `(lambda (unused-selection)
      (mapcar ,candidate-func (helm-marked-candidates))))
+
+(defmacro asana-exec-marked (candidates-func)
+  `(lambda (unused-selection)
+     (funcall ,candidates-func (helm-marked-candidates))))
+
+
 
 (defmacro asana-assocdr (key alist)
   `(cdr (assoc ,key ,alist)))
@@ -171,8 +177,9 @@
                ("Move to section `C-:'" . asana-task-move-to-section)
                ("Complete `C-RET'" . asana-task-complete)
                ("Delete `C-DEL'" . asana-task-delete)
-               ("Complete marked Tasks `M-RET'" . ,(asana-exec-marked 'asana-task-complete))
-               ("Delete marked Tasks `M-DEL'" . ,(asana-exec-marked 'asana-task-delete))))
+               ("Move marked Tasks `M-:'" . ,(asana-exec-marked 'asana-tasks-move-to-section))
+               ("Complete marked Tasks `M-RET'" . ,(asana-map-marked 'asana-task-complete))
+               ("Delete marked Tasks `M-DEL'" . ,(asana-map-marked 'asana-task-delete))))
     (keymap . ,(let ((map (make-sparse-keymap)))
                  (set-keymap-parent map helm-map)
                  (asana-define-key map
@@ -180,8 +187,9 @@
                    (kbd "C-:") 'asana-task-move-to-section
                    (kbd "<C-return>") 'asana-task-complete
                    (kbd "<C-backspace>") 'asana-task-delete
-                   (kbd "<M-return>") (asana-exec-marked 'asana-task-complete)
-                   (kbd "<M-backspace>") (asana-exec-marked 'asana-task-delete))
+                   (kbd "M-:") (asana-exec-marked 'asana-tasks-move-to-section)
+                   (kbd "<M-return>") (asana-map-marked 'asana-task-complete)
+                   (kbd "<M-backspace>") (asana-map-marked 'asana-task-delete))
                  map))))
 
 (defun asana-section-helm-source ()
@@ -212,22 +220,26 @@
                       (number-to-string task-id))))
 
 (defun asana-task-move-to-section (task-id)
-  (setq asana-selected-task `((id . ,task-id)))
+  (asana-tasks-move-to-section (list task-id)))
+
+(defun asana-tasks-move-to-section (task-ids)
+  (setq asana-selected-task-ids task-ids)
   (helm :sources (asana-section-helm-source)
         :buffer "*helm-asana*")
-  (setq asana-selected-task nil))
+  (setq asana-selected-task-ids nil))
 
 (defun asana-section-select (section)
-  (let ((task-sid (number-to-string (asana-assocdr 'id asana-selected-task))))
-    (asana-put (concat "/tasks/" task-sid)
-               `(("assignee_status" . ,(asana-assocdr 'assignee_status section))))
-    (asana-post (concat "/tasks/" task-sid "/addProject")
-                `(("project" . ,asana-my-tasks-project-id)
-                  ("section" . ,(asana-assocdr 'id section))) ; TODO in theory you can pass assignee_status here instead
-                (lambda (data)
-                  (if data
-                      (message "Unknown error: couldn't move task.")
-                    (message "Task moved."))))))
+  (dolist (task-id asana-selected-task-ids)
+    (let ((task-sid (number-to-string task-id)))
+      (asana-put (concat "/tasks/" task-sid)
+                 `(("assignee_status" . ,(asana-assocdr 'assignee_status section))))
+      (asana-post (concat "/tasks/" task-sid "/addProject")
+                  `(("project" . ,asana-my-tasks-project-id)
+                    ("section" . ,(asana-assocdr 'id section))) ; TODO in theory you can pass assignee_status here instead
+                  (lambda (data)
+                    (if data
+                        (message "Unknown error: couldn't move task.")
+                      (message "Task moved."))))))) ; TODO pass in task name
 
 (defun asana-task-complete (task-id)
   (asana-put (concat "/tasks/" (number-to-string task-id))
