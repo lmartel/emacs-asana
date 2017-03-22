@@ -58,3 +58,7 @@ Move all marked tasks to section [M-:]
 Complete all marked tasks [M-RET]
 Delete all marked tasks [M-DEL]
 ```
+
+## Known issues
+
+OSX El Capitan can break `exec-path-from-shell`, which corrupts your access token as it gets imported into Emacs. See https://github.com/purcell/exec-path-from-shell/issues/41 for more details. One available workaround is to disable OSX bash sessions with `touch ~/.bash_sessions_disable`.
