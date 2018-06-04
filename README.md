@@ -2,6 +2,8 @@
 
 Browse and act on your My Tasks list without leaving Emacs!
 
+![emacs-asana](emacs-asana.png)
+
 ## Dependencies
 
 You'll need these packages, available from melpa via `M-x package-install`:
