@@ -37,6 +37,8 @@ Add this to your `init.el`:
 (setq asana-keymap-prefix "C-c C-a") ; Or whatever you'd like to use as your prefix
 ```
 
+[Optional] By default, `asana-mode` loads tasks from your "My Tasks" list in your chosen workspace. To load tasks from a project instead, customize the variable `asana-my-tasks-project-id` with the project ID (the first long number in the URL of the project, or any task in that project) **after** choosing a workspace with `C-c a`.
+
 ### Available commands
 
 In the `asana-mode` minor mode, the following interactive commands are available:
@@ -67,8 +69,9 @@ OSX El Capitan can break `exec-path-from-shell`, which corrupts your access toke
 
 ## TODO
 
-- Pagination for > 100 tasks
+- **Pagination for > 100 tasks**
 - Improve API request batching & async around multi-select and assignee_status updates
 - Improve error messages, for example around ASANA_TOKEN not found
 - Improve/add docstrings
 - Publish v1.0 as package
+- Command to choose another project, rather than needing to copy/paste an ID
