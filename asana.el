@@ -1,3 +1,4 @@
+(eval-when-compile (require 'cl))
 (require 'json)
 (require 'url)
 (require 'url-http)
