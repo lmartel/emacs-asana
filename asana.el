@@ -268,12 +268,12 @@
   `(,(asana-assocdr 'name workspace) . ,workspace))
 
 (defun asana-workspace-select (workspace)
-  (customize-save-variable 'asana-selected-workspace workspace)
-  (asana-get "/users/me" `(("workspace" . ,(number-to-string (asana-assocdr 'id asana-selected-workspace)))
-                           ("opt_fields" . "atm_id"))
-             (lambda (data)
-               (customize-save-variable 'asana-my-tasks-project-id (asana-assocdr 'atm_id data))))
-  (helm-asana))
+  (let* ((workspace-id (number-to-string (asana-assocdr 'id workspace)))
+         (data (asana-get "/users/me" `(("workspace" . ,workspace-id)
+                                        ("opt_fields" . "atm_id")))))
+    (customize-save-variable 'asana-my-tasks-project-id (asana-assocdr 'atm_id data))
+    (customize-save-variable 'asana-selected-workspace workspace)
+    (helm-asana)))
 
 ;; Interactive
 
