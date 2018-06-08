@@ -1,17 +1,32 @@
-(eval-when-compile (require 'cl))
+;;; -*- lexical-binding: t -*-
+
+(eval-when-compile (require 'cl-seq))
+(require 'map)
 (require 'json)
 (require 'url)
 (require 'url-http)
+(require 'helm)
 
 ;; User config variables
 
-(defvar asana-keymap-prefix "C-c a")
-(exec-path-from-shell-copy-env "ASANA_TOKEN")
+(defcustom asana-keymap-prefix "C-c a"
+  "Keymap prefix"
+  :group 'asana
+  :type 'string)
+
+(defcustom asana-token (or (getenv "ASANA_TOKEN") "")
+  "Token"
+  :group 'asana
+  :type 'string)
+
+(defcustom asana-task-buffer-format :lisp
+  "Format of task buffer"
+  :group 'asana
+  :type '(choice (const :lisp) (const :org)))
 
 ;; Internal variables
 
 (defconst asana-api-root "https://app.asana.com/api/1.0")
-(defconst asana-token (getenv "ASANA_TOKEN"))
 
 (defvar asana-my-tasks-project-id nil)
 (defvar asana-selected-workspace nil)
@@ -39,14 +54,12 @@
     (reverse ret)))
 
 (defmacro asana-map-marked (candidate-func)
-  `(lambda (unused-selection)
+  `(lambda (_)
      (mapcar ,candidate-func (helm-marked-candidates))))
 
 (defmacro asana-exec-marked (candidates-func)
-  `(lambda (unused-selection)
+  `(lambda (_)
      (funcall ,candidates-func (helm-marked-candidates))))
-
-
 
 (defmacro asana-assocdr (key alist)
   `(cdr (assoc ,key ,alist)))
@@ -55,34 +68,37 @@
   (kbd (concat asana-keymap-prefix " " keyseq)))
 
 (defun asana-compose (a b)
-  (lexical-let ((a a)
-                (b b))
+  (let ((a a)
+        (b b))
     (lambda (&rest args)
       (funcall a (apply b args)))))
 
 (defun asana-filter-later (tasks)
-  (remove-if (lambda (task) (equal (asana-assocdr 'assignee_status task) "later")) tasks))
+  (cl-remove-if (lambda (task) (equal (asana-assocdr 'assignee_status task) "later")) tasks))
 
 (defun asana-fold-sections (tasks)
   (let ((prev-section (asana-assocdr 'name asana-selected-section)))
     (setq asana-selected-section nil)
-    (let ((tasks-with-sections (mapcar (lambda (task)
-                                         (let ((task-name (asana-assocdr 'name task)))
-                                           (cond ((string-suffix-p ":" task-name)
-                                                  (setq asana-selected-section task)
-                                                  (add-to-list 'asana-section-cache (asana-section-helm-data task))
-                                                  nil)
-                                                 (asana-selected-section
-                                                  (cons `(name . ,(concat "[" (asana-assocdr 'name asana-selected-section) "] " task-name)) task))
-                                                 (t
-                                                  task))))
-                                       tasks)))
+    (let ((tasks-with-sections
+		   (mapcar
+			(lambda (task)
+              (let ((task-name (asana-assocdr 'name task)))
+                (cond ((string-suffix-p ":" task-name)
+                       (setq asana-selected-section task)
+                       (add-to-list 'asana-section-cache (asana-section-helm-data task))
+                       nil)
+                      (asana-selected-section
+                       (cons `(name . ,(concat "[" (asana-assocdr 'name asana-selected-section) "] " task-name)) task))
+                      (t
+                       task))))
+            tasks)))
       (setq asana-selected-section prev-section)
-      (remove-if 'null tasks-with-sections))))
+      (cl-remove-if 'null tasks-with-sections))))
 
 (defun asana-headers-with-auth (&optional extra-headers)
   (append `(("Authorization" . ,(concat "Bearer " asana-token))) extra-headers))
 
+(defvar url-http-end-of-headers)
 (defun asana-read-response (buf)
   (let* ((json-array-type 'list)
          (response (json-read-from-string (with-current-buffer buf
@@ -94,7 +110,7 @@
         (error (concat "Asana API error: " (mapconcat (lambda (err) (asana-assocdr 'message err)) (cdr errs) "\n")))
       (asana-assocdr 'data response))))
 
-(defun asana-read-response-async (status)
+(defun asana-read-response-async (_)
   (asana-read-response (current-buffer)))
 
 ;; API
@@ -206,13 +222,144 @@
   `(,(asana-assocdr 'name section) . ,section))
 
 (defun asana-task-select (task-id)
-  (lexical-let ((task-id task-id))
-    (asana-get-task task-id (lambda (result)
-                              (with-output-to-temp-buffer "*Task*"
-                                (with-current-buffer "*Task*"
-                                  (cl-prettyprint result)
-                                  (insert "\n\n===== COMMENTS =====\n")
-                                  (cl-prettyprint (asana-get-task-stories task-id))))))))
+  (let ((task-id task-id))
+    (asana-get-task
+	 task-id
+	 (lambda (task)
+	   (asana-display-task task (asana-get-task-stories task-id))))))
+
+(defmacro asana-recode (&rest body)
+  `(let ((pt (point)))
+	 ,@body
+	 (recode-region pt (point) 'utf-8-unix 'utf-8-unix)))
+
+(defvar org-startup-folded)
+(declare-function org-insert-heading-respect-content "org")
+(defun asana-display-task (task stories)
+  (switch-to-buffer
+   (get-buffer-create
+	(format
+	 "*Asana Task %s/%s*"
+	 (map-nested-elt task '(workspace name))
+	 (map-elt task 'name))))
+  (let ((inhibit-read-only t) (pt (point)))
+	(erase-buffer)
+	(pcase asana-task-buffer-format
+	  (:lisp
+	   (asana-recode
+		(asana-task-insert-as-lisp task stories))
+	   (emacs-lisp-mode))
+	  (:org
+	   (let ((org-startup-folded 'showeverything))
+		 (org-mode)
+		 (org-insert-heading-respect-content)
+		 (asana-recode
+		  (asana-task-insert-as-org task stories)))))
+	(goto-char pt)
+	(view-mode)))
+
+(defun asana-task-insert-as-lisp (task stories)
+  (insert "\xc\n;;; ===== TASK =====\n\n")
+  (insert (pp task))
+  (insert "\n\n\xc\n;;; ===== COMMENTS =====\n\n")
+  (insert (pp stories)))
+
+(defun asana-task-insert-as-org (task stories)
+  (let ((closed (eql (map-elt task 'completed) :json-true))
+		(has-schedule (map-elt task 'start_on))
+		(has-deadline (map-elt task 'due_on))
+		(liked (eql (map-elt task 'liked) :json-true))
+		(hearted (eql (map-elt task 'hearted) :json-true)))
+	(insert
+	 (format
+	  "%s%s\n"
+	  (map-elt task 'name)
+	  (if (map-elt task 'tags)
+		  (format "%70s"
+				  (seq-doseq (tag (map-elt task 'tags)) (concat ":" tag))) "")))
+	(insert
+	 (format
+	  "%s%s%s"
+	  (if closed
+		  (format "CLOSED: %s%s"
+				  (format-time-string
+				   "[%Y-%m-%d %a %H:%M]"
+				   (date-to-time (map-elt task 'completed_at)))
+				  (if (or has-schedule has-deadline) " "  "\n")) "")
+	  (if has-schedule
+		  (format "SCHEDULED: %s%s"
+				  (format-time-string
+				   "[%Y-%m-%d %a]"
+				   (date-to-time (concat (map-elt task 'start_on) " 00:00")))
+				  (if has-deadline " "  "\n")) "")
+	  (if has-deadline
+		  (format "DEADLINE: %s\n"
+				  (format-time-string
+				   "[%Y-%m-%d %a]"
+				   (date-to-time (concat (map-elt task 'due_on) " 00:00")))) "")))
+	(insert ":PROPERTIES:\n")
+	(insert
+	 (format
+	  ":CREATED_AT: %s\n"
+	  (format-time-string
+	   "[%Y-%m-%d %a %H:%M]"
+	   (date-to-time (map-elt task 'created_at)))))
+	(insert
+	 (format
+	  ":MODIFIED_AT: %s\n"
+	  (format-time-string
+	   "[%Y-%m-%d %a %H:%M]"
+	   (date-to-time (map-elt task 'modified_at)))))
+	(insert
+	 (format
+	  ":ASANA_ID: %s-%s\n"
+	  (map-nested-elt task '(workspace id))
+	  (map-elt task 'id)))
+	(insert
+	 (format
+	  ":ASANA_URL: [[https://app.asana.com/0/%s/%s]]\n"
+	  (map-nested-elt task '(workspace id))
+	  (map-elt task 'id)))
+	(insert (format ":WORKSPACE: %s\n" (map-nested-elt task '(workspace name))))
+	(insert (format ":ASSIGNEE: %s\n" (map-nested-elt task '(assignee name))))
+	(insert (format ":ASSIGNEE_STATUS: %s\n" (map-elt task 'assignee_status)))
+	(when hearted (insert (format ":HEARTS: %d\n" (map-elt task 'num_hearts))))
+	(when liked (insert (format ":LIKES: %d\n" (map-elt task 'num_likes))))
+	(insert ":PROJECTS: ")
+	(seq-map (lambda (p)
+			   (insert (format "%s, "(map-elt p 'name))))
+			 (map-elt task 'projects))
+	(insert "\n")
+	(insert ":MEMBERSHIPS: ")
+	(seq-doseq (m (map-elt task 'memberships))
+	  (insert (format "%s, "(map-nested-elt m '(project name)))))
+	(insert "\n")
+	(insert ":FOLLOWERS: ")
+	(seq-doseq (f (map-elt task 'followers))
+	  (insert (format "%s, " (map-elt f 'name))))
+	(insert "\n")
+	(seq-doseq (f (map-elt task 'custom_fields))
+	  (when (map-elt f 'enabled)
+		(insert (format ":CUSTOM_%s: %s\n"
+						(replace-regexp-in-string
+						 " " "_" (upcase (substring (map-elt f 'name) 1)))
+						(map-nested-elt f '(enum_value name))))))
+	(insert ":END:\n")
+	(insert ":LOGBOOK:\n")
+	(seq-doseq (entry (reverse stories))
+	  (insert
+	   (format
+		"- %s (%s)\n"
+		(format-time-string "[%Y-%m-%d %a %H:%M]" (date-to-time (map-elt entry 'created_at)))
+		(map-elt entry 'type)))
+	  (let ((p (point)) (fill-prefix "  "))
+		(insert
+		 (format "  %s: %s"
+				 (map-nested-elt entry '(created_by name))
+				 (replace-regexp-in-string "\n" "\n  " (map-elt entry 'text))))
+		(fill-region p (point) nil nil nil))
+	  (insert "\n"))
+	(insert ":END:")))
 
 (defun asana-task-browse (task-id)
   (browse-url (concat "https://app.asana.com/0/"
@@ -228,6 +375,19 @@
   (helm :sources (asana-section-helm-source)
         :buffer "*helm-asana*")
   (setq asana-selected-task-ids nil))
+
+(defun asana-tasks-map (callback)
+  (asana-invalidate-task-cache)
+  (let ((tasks (list)))
+	(seq-doseq (task-id (map-values asana-task-cache))
+	  (asana-get-task
+	   task-id
+	   (lambda (props)
+		 (map-put tasks (map-elt props 'id)
+				  `((props . ,props)
+					(stories . ,(asana-get-task-stories (map-elt props 'id)))))
+		 (when (eq (length tasks) (length asana-task-cache))
+		   (funcall callback tasks)))))))
 
 (defun asana-section-select (section)
   (dolist (task-id asana-selected-task-ids)
