@@ -46,7 +46,7 @@
 ;; User config variables
 
 (defcustom asana-keymap-prefix "C-c a"
-  "`asana-mode' keymap prefix."
+  "Keymap prefix for asana commands."
   :group 'asana
   :type 'string)
 
@@ -600,7 +600,7 @@
   (asana-create-task task-name))
 
 (defun asana-helm ()
-  "Entrypoint for asana-helm. Select a workspace if none yet selected, then load the My Tasks list."
+  "Entrypoint for the Asana helm source. Select a workspace if none yet selected, then load the My Tasks list."
   (interactive)
   (if asana-selected-workspace
       (progn (asana-invalidate-task-cache)
