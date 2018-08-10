@@ -345,6 +345,7 @@
   (let ((closed (eql (map-elt task 'completed) :json-true))
         (has-schedule (map-elt task 'start_on))
         (has-deadline (map-elt task 'due_on))
+        (notes (map-elt task 'notes))
         (liked (eql (map-elt task 'liked) :json-true))
         (hearted (eql (map-elt task 'hearted) :json-true)))
     (insert
@@ -436,7 +437,19 @@
                  (replace-regexp-in-string "\n" "\n  " (map-elt entry 'text))))
         (fill-region p (point) nil nil nil))
       (insert "\n"))
-    (insert ":END:")))
+    (insert ":END:")
+	(when notes
+	  (newline-and-indent)
+	  (dolist (p (split-string
+				  (subst-char-in-string
+				   ?\u00a0 ?\u0020 ; Replace non-breaking-space with space
+				   (decode-coding-string notes 'utf-8-unix) t)
+				  "[\n]" t "[\n ]*"))
+		(unless (string-prefix-p "-" p)
+		  (newline))
+		(insert p)
+		(call-interactively #'org-fill-paragraph)
+		(newline)))))
 
 (defun asana-task-browse (task-id)
   "Browse to an Asana task by TASK-ID using `browse-url'."
