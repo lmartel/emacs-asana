@@ -119,10 +119,8 @@
 
 (defun asana-compose (a b)
   "Compose functions A and B."
-  (let ((a a)
-        (b b))
-    (lambda (&rest args)
-      (funcall a (apply b args)))))
+  (lambda (&rest args)
+    (funcall a (apply b args))))
 
 (defun asana-filter-later (tasks)
   "Filter out tasks marked as later from a list of TASKS."
