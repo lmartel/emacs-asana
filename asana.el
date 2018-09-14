@@ -467,24 +467,39 @@
         :buffer "*asana-helm*")
   (setq asana-selected-task-ids nil))
 
-(defun asana-tasks-map (callback)
-  "Map CALLBACK over all avilable Asana tasks."
-  (asana-invalidate-task-cache)
-  (let ((tasks (list)))
-    (seq-doseq (task-id (map-values asana-task-cache))
-      (asana-get-task
-       task-id
-       (lambda (props)
-         (map-put tasks (map-elt props 'id)
-                  `((props . ,props)
-                    (stories . ,(asana-get-task-stories (map-elt props 'id)))))
-         (when (eq (length tasks) (length asana-task-cache))
-           (funcall callback tasks)))))))
+(defun asana-tasks-fetch-data (tasks callback)
+  "Fetch tasks data and call CALLBACK."
+  (let* ((fetched 0)
+		 (to-fetch (* 2 (length tasks)))
+		 (reporter (make-progress-reporter "Fetching tasks..." 0 to-fetch)))
+	(cl-flet ((check-done
+			   nil
+			   (progress-reporter-update reporter (setq fetched (1+ fetched)))
+			   (when (>= fetched to-fetch)
+				 (progress-reporter-done reporter)
+				 (funcall callback tasks))))
+	  (seq-doseq (task-id (map-keys tasks))
+		(asana-get-task
+		 task-id
+		 (lambda (props)
+		   (map-put (map-elt tasks task-id) 'props props)
+		   (check-done)))
+		(asana-get-task-stories
+		 task-id
+		 (lambda (stories)
+		   (map-put (map-elt tasks task-id) 'stories stories)
+		   (check-done)))))))
 
 (defun asana-org-sync-tasks ()
   "One-way-sync all available Asana tasks to `asana-tasks-org-file'. Update previously downloaded tasks in-place; append newly discovered tasks. Slow for large projects!"
   (interactive)
-  (asana-tasks-map #'asana-tasks-org-digest))
+  (message "Fetching tasks...")
+  (asana-get-tasks
+   (lambda (tasks)
+	 (asana-tasks-fetch-data
+	  (seq-group-by (lambda (task) (map-elt task 'id))
+					(asana-fold-sections (asana-filter-later tasks)))
+	  #'asana-tasks-org-digest))))
 
 (defun asana-tasks-org-digest (tasks)
   "Dump TASKS into an org buffer backed by `asana-tasks-org-file'."
