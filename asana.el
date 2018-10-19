@@ -365,13 +365,13 @@
       (if has-schedule
           (format "SCHEDULED: %s%s"
                   (format-time-string
-                   "[%Y-%m-%d %a]"
+                   "<%Y-%m-%d %a>"
                    (date-to-time (concat (map-elt task 'start_on) " 00:00")))
                   (if has-deadline " "  "\n")) "")
       (if has-deadline
           (format "DEADLINE: %s\n"
                   (format-time-string
-                   "[%Y-%m-%d %a]"
+                   "<%Y-%m-%d %a>"
                    (date-to-time (concat (map-elt task 'due_on) " 00:00")))) "")))
     (insert ":PROPERTIES:\n")
     (insert
