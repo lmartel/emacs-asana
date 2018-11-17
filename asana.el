@@ -343,6 +343,7 @@
   (let ((closed (eql (map-elt task 'completed) :json-true))
         (has-schedule (map-elt task 'start_on))
         (has-deadline (map-elt task 'due_on))
+		(tags (map-elt task 'tags))
         (notes (map-elt task 'notes))
         (liked (eql (map-elt task 'liked) :json-true))
         (hearted (eql (map-elt task 'hearted) :json-true)))
@@ -350,9 +351,13 @@
      (format
       "%s%s\n"
       (map-elt task 'name)
-      (if (map-elt task 'tags)
-          (format "%70s"
-                  (seq-doseq (tag (map-elt task 'tags)) (concat ":" tag))) "")))
+      (if tags
+          (format
+		   "   %s:"
+		   (apply 'concat
+				  (seq-map (lambda (tag) (concat ":" (map-elt tag 'name))) tags)))
+		"")))
+	(if tags (org-align-tags))
     (insert
      (format
       "%s%s%s"
