@@ -440,7 +440,7 @@
                  (replace-regexp-in-string "\n" "\n  " (map-elt entry 'text))))
         (fill-region p (point) nil nil nil))
       (insert "\n"))
-    (insert ":END:")
+    (insert ":END:\n")
 	(when notes
 	  (newline-and-indent)
 	  (dolist (p (split-string
@@ -452,7 +452,10 @@
 		  (newline))
 		(insert p)
 		(call-interactively #'org-fill-paragraph)
-		(newline)))))
+		(newline 2)
+		(delete-blank-lines)))
+	(newline 2)
+	(delete-blank-lines)))
 
 (defun asana-task-browse (task-id)
   "Browse to an Asana task by TASK-ID using `browse-url'."
