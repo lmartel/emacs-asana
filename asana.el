@@ -517,8 +517,10 @@
   (switch-to-buffer (find-file asana-tasks-org-file))
   (seq-doseq (task tasks)
     (asana-task-org-sync (map-elt task 'props) (map-elt task 'stories)))
+  (org-element-cache-reset)
   (org-indent-indent-buffer)
   (goto-char (point-min))
+  (org-next-visible-heading 1)
   (org-sort-entries nil ?c)
   (org-global-cycle '(4)))
 
