@@ -61,7 +61,9 @@
   :type '(choice (const :lisp) (const :org)))
 
 (defvar org-directory)
-(defcustom asana-tasks-org-file (expand-file-name "asana.org" org-directory)
+(defcustom asana-tasks-org-file
+  (expand-file-name "asana.org" (or (and (boundp 'org-directory) org-directory)
+									user-emacs-directory))
   "Org file to sync Asana tasks into."
   :group 'asana
   :type 'file)
