@@ -152,19 +152,25 @@
   "Create an HTTP headers list from the configured Asana token, appending EXTRA-HEADERS if any."
   (append `(("Authorization" . ,(concat "Bearer " (asana-get-token)))) extra-headers))
 
+(define-error 'asana-api-error "Asana API error")
+
 (defvar url-http-end-of-headers)
 (defun asana-read-response (buf)
   "Read the raw Asana API response from BUF, surfacing errors if any and returning the data payload otherwise."
   (let* ((json-array-type 'list)
-         (response (json-read-from-string (with-current-buffer buf
-                                            (set-buffer-multibyte t)
-                                            (goto-char url-http-end-of-headers)
-                                            (delete-region (point-min) (point))
-                                            (buffer-string))))
-         (errs (assoc 'errors response)))
-    (if errs
-        (error (concat "Asana API error: " (mapconcat (lambda (err) (asana-assocdr 'message err)) (cdr errs) "\n")))
-      (asana-assocdr 'data response))))
+				 (response
+					(json-read-from-string
+					 (with-current-buffer buf
+             (set-buffer-multibyte t)
+						 (goto-char url-http-end-of-headers)
+						 (delete-region (point-min) (point))
+						 (buffer-string))))
+				 (errors (map-elt response 'errors)))
+		(when errors
+			(let (messages)
+				(seq-doseq (err (cdr errors)) (push (map-elt err 'message) messages))
+				(signal 'asana-api-error messages)))
+		(map-elt response 'data)))
 
 (defun asana-read-response-async (_)
   "Read an Asana API response from the async results buffer."
