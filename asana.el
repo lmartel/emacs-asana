@@ -408,6 +408,8 @@ DATA is a list parsed from the JSON API response."
 
 (defun asana-task-insert-as-org (task stories)
   "Insert an org-formatted Asana TASK with STORIES into the current buffer."
+  (eval-and-compile
+	(require 'org))
   (let ((closed (eq (map-elt task 'completed) t))
         (has-schedule (map-elt task 'start_on))
         (has-deadline (map-elt task 'due_on))
@@ -588,8 +590,8 @@ DATA is a list parsed from the JSON API response."
 (defun asana-tasks-org-digest (tasks)
   "Dump TASKS into an org buffer backed by `asana-tasks-org-file'."
   (eval-and-compile
-    (require 'org)
-    (require 'org-indent))
+	(require 'org)
+	(require 'org-indent))
   (switch-to-buffer (find-file asana-tasks-org-file))
   (seq-doseq (task tasks)
     (asana-task-org-sync (map-elt task 'props) (map-elt task 'stories)))
