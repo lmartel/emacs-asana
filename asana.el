@@ -300,12 +300,6 @@
      (lambda (task)
        (asana-display-task task (asana-get-task-stories task-id))))))
 
-(defmacro asana-recode (&rest body)
-  "Run BODY then recode the newly-added buffer content."
-  `(let ((pt (point)))
-     ,@body
-     (recode-region pt (point) 'utf-8-unix 'utf-8-unix)))
-
 (defvar org-startup-folded)
 (declare-function org-insert-heading-respect-content "org")
 (defun asana-display-task (task stories)
@@ -320,15 +314,13 @@
     (erase-buffer)
     (pcase asana-task-buffer-format
       (:lisp
-       (asana-recode
-        (asana-task-insert-as-lisp task stories))
+       (asana-task-insert-as-lisp task stories)
        (emacs-lisp-mode))
       (:org
        (let ((org-startup-folded 'showeverything))
          (org-mode)
          (org-insert-heading-respect-content)
-         (asana-recode
-          (asana-task-insert-as-org task stories)))))
+         (asana-task-insert-as-org task stories))))
     (goto-char pt)
     (view-mode)))
 
@@ -542,9 +534,8 @@
             (setq todo-state (org-get-todo-state))
             (org-cut-special))
         (goto-char (point-max)))
-      (asana-recode
-       (org-insert-heading-respect-content)
-       (asana-task-insert-as-org task stories))
+      (org-insert-heading-respect-content)
+	  (asana-task-insert-as-org task stories)
       (org-back-to-heading)
       (org-todo (or todo-state 'nextset))
       (when id (org-entry-put (point) "ID" id)))))
