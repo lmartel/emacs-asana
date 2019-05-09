@@ -602,6 +602,7 @@ DATA is a list parsed from the JSON API response."
   (org-sort-entries nil ?c)
   (org-global-cycle '(4)))
 
+(defvar org-log-done)
 (defun asana-task-org-sync (task stories)
   "Write one TASK and its STORIES to the current buffer in org format."
   (save-excursion
@@ -622,7 +623,12 @@ DATA is a list parsed from the JSON API response."
       (org-insert-heading-respect-content)
 	  (asana-task-insert-as-org task stories)
       (org-back-to-heading)
-      (org-todo (or todo-state 'nextset))
+	  (if (eq (map-elt task 'completed) t)
+		  (let (org-log-done)
+			(org-todo (or (car-safe (member todo-state org-done-keywords))
+						  'done)))
+		(org-todo (or (car-safe (member todo-state org-not-done-keywords))
+					  'nextset)))
       (when id (org-entry-put (point) "ID" id)))))
 
 (defun asana-section-select (section)
