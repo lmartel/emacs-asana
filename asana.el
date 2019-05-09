@@ -599,7 +599,7 @@ DATA is a list parsed from the JSON API response."
   (org-indent-indent-buffer)
   (goto-char (point-min))
   (org-next-visible-heading 1)
-  (org-sort-entries nil ?c)
+  (org-sort-entries nil ?r nil nil "CREATED_AT")
   (org-global-cycle '(4)))
 
 (defvar org-log-done)
