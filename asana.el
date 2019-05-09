@@ -333,13 +333,13 @@
 
 (defun asana-task-insert-as-org (task stories)
   "Insert an org-formatted Asana TASK with STORIES into the current buffer."
-  (let ((closed (eql (map-elt task 'completed) :json-true))
+  (let ((closed (eq (map-elt task 'completed) t))
         (has-schedule (map-elt task 'start_on))
         (has-deadline (map-elt task 'due_on))
 		(tags (map-elt task 'tags))
         (notes (map-elt task 'notes))
-        (liked (eql (map-elt task 'liked) :json-true))
-        (hearted (eql (map-elt task 'hearted) :json-true)))
+        (liked (eq (map-elt task 'liked) t))
+        (hearted (eq (map-elt task 'hearted) t)))
     (insert
      (format
       "%s%s\n"
