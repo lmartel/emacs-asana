@@ -155,6 +155,7 @@
   "Read the raw Asana API response from BUF, surfacing errors if any and returning the data payload otherwise."
   (let* ((json-array-type 'list)
          (response (json-read-from-string (with-current-buffer buf
+                                            (set-buffer-multibyte t)
                                             (goto-char url-http-end-of-headers)
                                             (delete-region (point-min) (point))
                                             (buffer-string))))
