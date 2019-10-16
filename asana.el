@@ -90,10 +90,11 @@ Asana free plan limit is 50. Asana premium plan limit is 1500."
 
 (defconst asana-api-root "https://app.asana.com/api/1.0")
 
-(defvar asana-my-tasks-project-id nil)
-(defvar asana-selected-workspace nil)
+(defvar asana-my-user-task-list-gid nil)
+(defvar asana-selected-workspace-gid nil)
+(defvar asana-selected-workspace-name nil)
 (defvar asana-selected-section nil)
-(defvar asana-selected-task-ids nil)
+(defvar asana-selected-task-gids nil)
 (defvar asana-task-cache nil)
 (defvar asana-section-cache nil)
 
@@ -296,25 +297,24 @@ DATA is a list parsed from the JSON API response."
 ;; unused
 (defun asana-get-sections (&optional callback)
   "Get all Asana sections within the current project. If CALLBACK is provided, run asynchronously."
-  (asana-get (concat "/projects/" asana-my-tasks-project-id "/sections") `(("limit" . "100"))
+  (asana-get (concat "/projects/" asana-my-user-task-list-gid "/sections")
              callback))
 
 (defun asana-get-tasks (&optional callback)
-  "Get all Asana tasks (limit 100) assigned-to-me in the current Workspace. If CALLBACK is provided, run asynchronously."
-  (asana-get "/tasks" `(("workspace" . ,(number-to-string (asana-assocdr 'id asana-selected-workspace)))
-                        ("opt_fields" . "id,name,assignee_status")
-                        ("limit" . "100")
+  "Get all Asana tasks assigned-to-me in the current Workspace. If CALLBACK is provided, run asynchronously."
+  (asana-get "/tasks" `(("workspace" . ,asana-selected-workspace-gid)
+                        ("opt_fields" . "gid,name,assignee_status")
                         ("assignee" . "me")
                         ("completed_since" . "now"))
              callback))
 
-(defun asana-get-task (task-id &optional callback)
-  "Get an Asana task by TASK-ID. If CALLBACK is provided, run asynchronously."
-  (asana-get (concat "/tasks/" (number-to-string task-id)) nil callback))
+(defun asana-get-task (task-gid &optional callback)
+  "Get an Asana task by TASK-GID. If CALLBACK is provided, run asynchronously."
+  (asana-get (concat "/tasks/" task-gid) nil callback))
 
-(defun asana-get-task-stories (task-id &optional callback)
-  "Get the stories (comments, edit history, etc) for an Asana task by TASK-ID. If CALLBACK is provided, run asynchronously."
-  (asana-get (concat "/tasks/" (number-to-string task-id) "/stories") nil callback))
+(defun asana-get-task-stories (task-gid &optional callback)
+  "Get the stories (comments, edit history, etc) for an Asana task by TASK-GID. If CALLBACK is provided, run asynchronously."
+  (asana-get (concat "/tasks/" task-gid "/stories") nil callback))
 
 ;; Caching
 
@@ -333,7 +333,7 @@ DATA is a list parsed from the JSON API response."
 
 (defun asana-task-helm-source ()
   "Build a Helm source from My Asana Tasks in the current workspace."
-  `((name . ,(concat "My Asana Tasks in " (asana-assocdr 'name asana-selected-workspace)))
+  `((name . ,(concat "My Asana Tasks in " asana-selected-workspace-name))
     (candidates . ,(lambda () asana-task-cache))
     (volatile)
     (action . (("Select `RET'" . asana-task-get-and-display)
@@ -364,16 +364,16 @@ DATA is a list parsed from the JSON API response."
     (action . (("Select `RET'" . asana-section-select)))))
 
 (defun asana-task-helm-data (task)
-  "Build a (name . id) Helm data element from an Asana TASK."
-  `(,(asana-assocdr 'name task) . ,(asana-assocdr 'id task)))
+  "Build a (name . gid) Helm data element from an Asana TASK."
+  `(,(asana-assocdr 'name task) . ,(asana-assocdr 'gid task)))
 
 (defun asana-section-helm-data (section)
   "Build a (name . data) Helm data element from an Asana SECTION."
   `(,(asana-assocdr 'name section) . ,section))
 
-(defun asana-task-get-and-display (task-id)
+(defun asana-task-get-and-display (task-gid)
   "Fetch task and stories by TASK-ID then display it."
-  (asana-display-task (asana-get-task task-id) (asana-get-task-stories task-id)))
+  (asana-display-task (asana-get-task task-gid) (asana-get-task-stories task-gid)))
 
 (defvar org-startup-folded)
 (declare-function org-insert-heading-respect-content "org")
@@ -464,13 +464,13 @@ DATA is a list parsed from the JSON API response."
     (insert
      (format
       ":ASANA_ID: %s-%s\n"
-      (map-nested-elt task '(workspace id))
-      (map-elt task 'id)))
+      (map-nested-elt task '(workspace gid))
+      (map-elt task 'gid)))
     (insert
      (format
       ":ASANA_URL: [[https://app.asana.com/0/%s/%s]]\n"
-      (map-nested-elt task '(workspace id))
-      (map-elt task 'id)))
+      (map-nested-elt task '(workspace gid))
+      (map-elt task 'gid)))
     (insert (format ":WORKSPACE: %s\n" (map-nested-elt task '(workspace name))))
     (insert (format ":ASSIGNEE: %s\n" (map-nested-elt task '(assignee name))))
     (insert (format ":ASSIGNEE_STATUS: %s\n" (map-elt task 'assignee_status)))
@@ -527,57 +527,61 @@ DATA is a list parsed from the JSON API response."
 	(newline 2)
 	(delete-blank-lines)))
 
-(defun asana-task-browse (task-id)
+(defun asana-task-browse (task-gid)
   "Browse to an Asana task by TASK-ID using `browse-url'."
   (browse-url (concat "https://app.asana.com/0/"
-                      (number-to-string (asana-assocdr 'id asana-selected-workspace))
+                      asana-selected-workspace-gid
                       "/"
-                      (number-to-string task-id))))
+                      task-gid)))
 
-(defun asana-task-move-to-section (task-id)
+(defun asana-task-move-to-section (task-gid)
   "Move one task to a section by TASK-ID."
-  (asana-tasks-move-to-section (list task-id)))
+  (asana-tasks-move-to-section (list task-gid)))
 
-(defun asana-tasks-move-to-section (task-ids)
+(defun asana-tasks-move-to-section (task-gids)
   "Prompt to select a section, then move a list of Asana tasks to it by their TASK-IDS."
-  (setq asana-selected-task-ids task-ids)
+  (setq asana-selected-task-gids task-gids)
   (helm :sources (asana-section-helm-source)
         :buffer "*asana-helm*")
-  (setq asana-selected-task-ids nil))
+  (setq asana-selected-task-gids nil))
 
 (defun asana-tasks-fetch-data (tasks callback)
   "Fetch tasks data and call CALLBACK."
   (let* ((tasks (map-into tasks 'hash-table))
-		 (fetched 0)
-		 (to-fetch (* 2 (map-length tasks)))
-		 (reporter (make-progress-reporter "Fetching tasks..." 0 to-fetch)))
-	(cl-flet ((check-done
-			   nil
-			   (cl-incf fetched)
-			   (progress-reporter-update reporter fetched)
-			   (when (= fetched to-fetch)
-				 (progress-reporter-done reporter)
-				 (funcall callback (map-into tasks 'list)))))
-	  (seq-doseq (task-id (map-keys tasks))
-		(let ((asana-get-async-error-handler
-			   (lambda (_)
-				 (map-delete tasks task-id)
-				 (check-done))))
-		  (asana-get-task
-		   task-id
-		   (lambda (props)
-			 (when (map-contains-key tasks task-id)
-			   (map-put (map-elt tasks task-id) 'props props))
-			 (check-done)))
-		  (asana-get-task-stories
-		   task-id
-		   (lambda (stories)
-			 (when (map-contains-key tasks task-id)
-			   (map-put (map-elt tasks task-id) 'stories stories))
-			 (check-done))))))))
+				 (fetched 0)
+				 (to-fetch (* 2 (map-length tasks)))
+				 (reporter (make-progress-reporter "Fetching tasks..." 0 to-fetch)))
+		(cl-flet ((check-done
+							 nil
+							 (cl-incf fetched)
+							 (progress-reporter-update reporter fetched)
+							 (when (= fetched to-fetch)
+								 (progress-reporter-done reporter)
+								 (funcall callback (map-into tasks 'list)))))
+			(seq-doseq (task-gid (map-keys tasks))
+				(let ((asana-get-async-error-handler
+							 (lambda (_)
+								 (map-delete tasks task-gid)
+								 (check-done))))
+					(asana-get-task
+					 task-gid
+					 (lambda (props)
+						 (when (map-contains-key tasks task-gid)
+							 (map-put (map-elt tasks task-gid) 'props props))
+						 (check-done)))
+					(asana-get-task-stories
+					 task-gid
+					 (lambda (stories)
+						 (when (map-contains-key tasks task-gid)
+							 (map-put (map-elt tasks task-gid) 'stories stories))
+						 (check-done))))))))
 
-(defun asana-org-sync-tasks ()
-  "One-way-sync all available Asana tasks to `asana-tasks-org-file'. Update previously downloaded tasks in-place; append newly discovered tasks. Slow for large projects!"
+(defun asana-org-sync-tasks (&optional query)
+  "One-way-sync all user own open tasks to `asana-tasks-org-file'.
+Update previously downloaded tasks in-place according to org tags search QUERY;
+Append newly discovered tasks.
+
+Slow for large projects!"
   (interactive)
   (message "Fetching tasks...")
   (asana-get-tasks
@@ -610,8 +614,8 @@ DATA is a list parsed from the JSON API response."
             (org-find-property
              "ASANA_ID"
              (format "%s-%s"
-                     (map-nested-elt task '(workspace id))
-                     (map-elt task 'id))))
+                     (map-nested-elt task '(workspace gid))
+                     (map-elt task 'gid))))
            id todo-state)
       (if existing
           (progn
@@ -633,22 +637,21 @@ DATA is a list parsed from the JSON API response."
 
 (defun asana-section-select (section)
   "Select SECTION, moving the previously selected tasks to it."
-  (dolist (task-id asana-selected-task-ids)
-    (let ((task-sid (number-to-string task-id)))
-      (asana-put (concat "/tasks/" task-sid)
-                 `(("assignee_status" . ,(asana-assocdr 'assignee_status section))))
-      (asana-post (concat "/tasks/" task-sid "/addProject")
-                  `(("project" . ,asana-my-tasks-project-id)
-                    ("section" . ,(asana-assocdr 'id section))) ; TODO in theory you can pass assignee_status here instead, but Asana API bug prevents this.
-                  (lambda (data)
-                    (let ((task-name (asana-assocdr 'name data)))
-                      (if data
-                          (message "Unknown error: couldn't move `%s'." task-name)
-                        (message "`%s' moved." task-name))))))))
+  (dolist (task-gid asana-selected-task-gids)
+    (asana-put (concat "/tasks/" task-gid)
+							 `(("assignee_status" . ,(asana-assocdr 'assignee_status section))))
+		(asana-post (concat "/tasks/" task-gid "/addProject")
+								`(("project" . ,asana-my-user-task-list-gid)
+									("section" . ,(asana-assocdr 'gid section))) ; TODO in theory you can pass assignee_status here instead, but Asana API bug prevents this.
+								(lambda (data)
+									(let ((task-name (asana-assocdr 'name data)))
+										(if data
+												(message "Unknown error: couldn't move `%s'." task-name)
+											(message "`%s' moved." task-name)))))))
 
-(defun asana-task-complete (task-id)
+(defun asana-task-complete (task-gid)
   "Complete an Asana task by TASK-ID."
-  (asana-put (concat "/tasks/" (number-to-string task-id))
+  (asana-put (concat "/tasks/" task-gid)
              '(("completed" . t))
              (lambda (data)
                (let ((task-name (asana-assocdr 'name data)))
@@ -656,9 +659,9 @@ DATA is a list parsed from the JSON API response."
                      (message "`%s' completed." task-name)
                    (message "Unknown error: couldn't complete `%s'" task-name))))))
 
-(defun asana-task-delete (task-id)
+(defun asana-task-delete (task-gid)
   "Delete an Asana task by TASK-ID."
-  (asana-delete (concat "/tasks/" (number-to-string task-id))
+  (asana-delete (concat "/tasks/" task-gid)
                 nil
                 (lambda (data)
                   (if data
@@ -676,12 +679,11 @@ DATA is a list parsed from the JSON API response."
   `(,(asana-assocdr 'name workspace) . ,workspace))
 
 (defun asana-workspace-select (workspace)
-  "Select WORKSPACE by id and save the selection with customize."
-  (let* ((workspace-id (number-to-string (asana-assocdr 'id workspace)))
-         (data (asana-get "/users/me" `(("workspace" . ,workspace-id)
-                                        ("opt_fields" . "atm_id")))))
-    (customize-save-variable 'asana-my-tasks-project-id (asana-assocdr 'atm_id data))
-    (customize-save-variable 'asana-selected-workspace workspace)
+  "Select WORKSPACE by gid and save the selection with customize."
+  (let* ((data (asana-get "/users/me/user_task_list" `(("workspace" . ,(asana-assocdr 'gid workspace))))))
+    (customize-save-variable 'asana-my-user-task-list-gid (asana-assocdr 'gid data))
+    (customize-save-variable 'asana-selected-workspace-gid (asana-assocdr 'gid workspace))
+		(customize-save-variable 'asana-selected-workspace-name (asana-assocdr 'name workspace))
     (asana-helm)))
 
 ;; Interactive
@@ -706,7 +708,7 @@ DATA is a list parsed from the JSON API response."
   (asana-post "/tasks" `(("name" . ,task-name)
                          ("notes" . ,(or description ""))
                          ("assignee" . "me")
-                         ("workspace" . ,(number-to-string (asana-assocdr 'id asana-selected-workspace))))
+                         ("workspace" . asana-selected-workspace-gid))
               (lambda (data)
                 (let ((task-name (asana-assocdr 'name data)))
                   (if task-name
@@ -721,7 +723,7 @@ DATA is a list parsed from the JSON API response."
 (defun asana-helm ()
   "Entrypoint for the Asana helm source. Select a workspace if none yet selected, then load the My Tasks list."
   (interactive)
-  (if asana-selected-workspace
+  (if asana-selected-workspace-gid
       (progn (asana-invalidate-task-cache)
              (helm :sources (asana-task-helm-source)
                    :buffer "*asana-helm*"))
@@ -731,7 +733,8 @@ DATA is a list parsed from the JSON API response."
 (defun asana-helm-change-workspace ()
   "Change the active workspace used by Asana commands. Alternatively, customize the `asana-selected-workspace' variable."
   (interactive)
-  (customize-save-variable 'asana-selected-workspace nil)
+  (customize-save-variable 'asana-selected-workspace-gid nil)
+  (customize-save-variable 'asana-selected-workspace-name nil)
   (asana-clear-task-cache)
   (asana-helm))
 
