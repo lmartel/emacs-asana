@@ -5,7 +5,7 @@
 ;; Author: Leo Martel <leo@lpm.io>
 ;;         Renato Ferreira <renatofdds@gmail.com>
 ;; Maintainer: Leo Martel <leo@lpm.io>
-;; Version: 0.2.1
+;; Version: 0.3.0
 ;; Keywords: comm outlines tools
 ;; Homepage: https://github.com/lmartel/emacs-asana
 ;; Package-Requires: ((emacs "25.1") (helm "1.9"))
