@@ -26,17 +26,15 @@
 ;;; Commentary:
 
 ;; This package provides utilities for working with Asana (https://asana.com) tasks:
-;; - Create tasks from the minibuffer
-;; - Dump your tasks to org-mode TODOs
-;; - List and act on your tasks in bulk with `helm' extensions
-;;
-;; The minor mode `asana-mode' provides a keymap, or just call the interactive `asana-*'
-;; functions directly with M-x.
+;; - `asana-create-task' and `asana-create-task-quickly' Create tasks from the minibuffer
+;; - `asana-org-sync-tasks' and `asana-org-sync-task-at-point' Dump your tasks to org-mode TODOs
+;; - `asana-helm' List and act on your tasks in bulk with `helm' extensions
 
 ;;; Code:
 
 (eval-when-compile
-  (require 'cl-seq))
+  (require 'cl-lib)
+	(require 'subr-x))
 (require 'helm)
 (require 'json)
 (require 'map)
@@ -53,6 +51,7 @@
 
 (defvar asana-token-env-var "ASANA_TOKEN"
   "Name of environment variable to check for an Asana personal access token. If nil or not found, fall back to `asana-token'.")
+
 (defvar asana-token nil
   "If non-nil, use this instead of checking the environment variable `asana-token-env-var'.")
 
@@ -145,7 +144,7 @@ Asana free plan limit is 50. Asana premium plan limit is 1500."
 
 (defun asana-filter-later (tasks)
   "Filter out tasks marked as later from a list of TASKS."
-  (cl-remove-if (lambda (task) (equal (asana-assocdr 'assignee_status task) "later")) tasks))
+  (seq-filter (lambda (task) (equal (asana-assocdr 'assignee_status task) "later")) tasks))
 
 (defun asana-fold-sections (tasks)
   "Remove section placeholders from a list of TASKS and prefix task names with [SECTION] instead."
@@ -165,7 +164,7 @@ Asana free plan limit is 50. Asana premium plan limit is 1500."
                        task))))
             tasks)))
       (setq asana-selected-section prev-section)
-      (cl-remove-if 'null tasks-with-sections))))
+      (delete 'null tasks-with-sections))))
 
 (defun asana-headers-with-auth (&optional extra-headers)
   "Create an HTTP headers list from the configured Asana token, appending EXTRA-HEADERS if any."
@@ -577,49 +576,6 @@ DATA is a list parsed from the JSON API response."
 							 (map-put (map-elt tasks task-gid) 'stories stories))
 						 (check-done))))))))
 
-(defun asana-org-sync-tasks (&optional query)
-  "One-way-sync all user own open tasks to `asana-tasks-org-file'.
-Update previously downloaded tasks in-place according to org tags search QUERY;
-Append newly discovered tasks.
-
-Slow for large projects!"
-  (interactive)
-	(eval-and-compile
-		(require 'org)
-		(require 'org-indent))
-  (message "Fetching tasks...")
-  (asana-get-my-open-tasks
-   (lambda (tasks)
-		 (switch-to-buffer (find-file asana-tasks-org-file))
-		 (let* ((existent
-						 (mapcar (lambda (id) (list (string-trim-left id ".+-")))
-										 (remove nil (org-map-entries
-																	(lambda () (org-entry-get nil "ASANA_ID"))
-																	(format "+ASANA_ID={.}+%s" (or query ""))))))
-						(gids
-						 (append existent (mapcar (lambda (task) (list (map-elt task 'gid)))
-																			(asana-fold-sections tasks)))))
-			 (asana-tasks-fetch-data gids #'asana-tasks-org-digest)))))
-
-(defun asana-org-sync-task-at-point ()
-  "Sync task at point with Asana by ASANA_ID property"
-  (interactive)
-	(eval-and-compile
-		(require 'org)
-		(require 'org-indent))
-	(let ((aid (org-entry-get nil "ASANA_ID")))
-		(if (not aid)
-				(message "No ASANA_ID property at current point")
-			(let* ((task-gid (string-trim-left aid ".+-"))
-						 (asana-selected-workspace-gid (string-trim-right aid "-.+"))
-						 (props (asana-get-task task-gid))
-						 (stories (asana-get-task-stories task-gid)))
-				(org-narrow-to-subtree)
-				(asana-task-org-sync props stories)
-				(widen)
-				(org-element-cache-reset)
-				(org-indent-indent-buffer)))))
-
 (defun asana-tasks-org-digest (tasks)
   "Dump TASKS into an org buffer backed by `asana-tasks-org-file'."
   (eval-and-compile
@@ -721,20 +677,7 @@ Slow for large projects!"
 
 ;; Interactive
 
-(define-minor-mode asana-mode
-  "Minor mode providing key bindings for asana-* comnmands."
-  nil
-  " ⸫"
-  `((,(asana-kbd "<return>") . asana-helm)
-    (,(asana-kbd "a") . asana-helm)
-    (,(asana-kbd "A") . asana-helm-change-workspace)
-    (,(asana-kbd "c") . asana-create-task-quickly)
-    (,(asana-kbd "C") . asana-create-task))
-  :group 'asana)
-
-(define-globalized-minor-mode global-asana-mode asana-mode asana-mode
-  :require 'asana)
-
+;;;###autoload
 (defun asana-create-task (task-name &optional description)
   "Create task TASK-NAME with optional DESCRIPTION. If called interactively, ask for both."
   (interactive "sCreate Asana Task: \nsTask Description: ")
@@ -748,11 +691,13 @@ Slow for large projects!"
                       (message "Created task: `%s'." task-name)
                     (message "Unknown error: couldn't create task."))))))
 
+;;;###autoload
 (defun asana-create-task-quickly (task-name)
   "Create a task TASK-NAME with no description."
   (interactive "sQuick-Create Asana Task: ")
   (asana-create-task task-name))
 
+;;;###autoload
 (defun asana-helm ()
   "Entrypoint for the Asana helm source. Select a workspace if none yet selected, then load the My Tasks list."
   (interactive)
@@ -763,6 +708,7 @@ Slow for large projects!"
     (helm :sources (asana-workspace-helm-source)
           :buffer "*asana-helm*")))
 
+;;;###autoload
 (defun asana-helm-change-workspace ()
   "Change the active workspace used by Asana commands. Alternatively, customize the `asana-selected-workspace' variable."
   (interactive)
@@ -770,6 +716,51 @@ Slow for large projects!"
   (customize-save-variable 'asana-selected-workspace-name nil)
   (asana-clear-task-cache)
   (asana-helm))
+
+;;;###autoload
+(defun asana-org-sync-tasks (&optional query)
+  "One-way-sync all user own open tasks to `asana-tasks-org-file'.
+Update previously downloaded tasks in-place according to org tags search QUERY;
+Append newly discovered tasks.
+
+Slow for large projects!"
+  (interactive)
+	(eval-and-compile
+		(require 'org)
+		(require 'org-indent))
+  (message "Fetching tasks...")
+  (asana-get-my-open-tasks
+   (lambda (tasks)
+		 (switch-to-buffer (find-file asana-tasks-org-file))
+		 (let* ((existent
+						 (mapcar (lambda (id) (list (string-trim-left id ".+-")))
+										 (remove nil (org-map-entries
+																	(lambda () (org-entry-get nil "ASANA_ID"))
+																	(format "+ASANA_ID={.}+%s" (or query ""))))))
+						(gids
+						 (append existent (mapcar (lambda (task) (list (map-elt task 'gid)))
+																			(asana-fold-sections tasks)))))
+			 (asana-tasks-fetch-data gids #'asana-tasks-org-digest)))))
+
+;;;###autoload
+(defun asana-org-sync-task-at-point ()
+  "Sync task at point with Asana by ASANA_ID property"
+  (interactive)
+	(eval-and-compile
+		(require 'org)
+		(require 'org-indent))
+	(let ((aid (org-entry-get nil "ASANA_ID")))
+		(if (not aid)
+				(message "No ASANA_ID property at current point")
+			(let* ((task-gid (string-trim-left aid ".+-"))
+						 (asana-selected-workspace-gid (string-trim-right aid "-.+"))
+						 (props (asana-get-task task-gid))
+						 (stories (asana-get-task-stories task-gid)))
+				(org-narrow-to-subtree)
+				(asana-task-org-sync props stories)
+				(widen)
+				(org-element-cache-reset)
+				(org-indent-indent-buffer)))))
 
 (provide 'asana)
 ;;; asana.el ends here
