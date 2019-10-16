@@ -241,14 +241,10 @@ Asana free plan limit is 50. Asana premium plan limit is 1500."
 
 (defun asana-get-async (url &optional callback)
   "Internal asynchronous API fetcher"
-  (let ((m (point-marker)))
-		(url-queue-retrieve
-		 url
-		 (asana-url-retrieve-callback
-			(let ((resp (asana-read-response (current-buffer))))
-				(switch-to-buffer (marker-buffer m))
-				(goto-char m)
-				(funcall callback resp))))))
+  (url-queue-retrieve
+	 url
+	 (asana-url-retrieve-callback
+		(funcall callback (asana-read-response (current-buffer))))))
 
 (defun asana-get-sync (url)
   "Internal synchronous API fetcher"
@@ -328,11 +324,11 @@ DATA is a list parsed from the JSON API response."
 
 (defun asana-invalidate-task-cache ()
   "Clear and re-populate the Asana task cache."
+	(setq asana-section-cache nil)
   (asana-get-my-open-tasks
 	 (lambda (tasks)
      (setq asana-task-cache (mapcar 'asana-task-helm-data (asana-fold-sections (asana-filter-later tasks))))
-     (and helm-alive-p (helm-update))))
-  (setq asana-section-cache nil))
+     (and helm-alive-p (helm-update)))))
 
 ;; Helm
 
@@ -591,10 +587,10 @@ Slow for large projects!"
 	(eval-and-compile
 		(require 'org)
 		(require 'org-indent))
-	(switch-to-buffer (find-file asana-tasks-org-file))
   (message "Fetching tasks...")
   (asana-get-my-open-tasks
    (lambda (tasks)
+		 (switch-to-buffer (find-file asana-tasks-org-file))
 		 (let* ((existent
 						 (mapcar (lambda (id) (list (string-trim-left id ".+-")))
 										 (remove nil (org-map-entries
