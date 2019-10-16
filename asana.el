@@ -511,21 +511,21 @@ DATA is a list parsed from the JSON API response."
         (fill-region p (point) nil nil nil))
       (insert "\n"))
     (insert ":END:\n")
-	(when notes
-	  (newline-and-indent)
-	  (dolist (p (split-string
-				  (subst-char-in-string
-				   ?\u00a0 ?\u0020 ; Replace non-breaking-space with space
-				   (decode-coding-string notes 'utf-8-unix) t)
-				  "[\n]" t "[\n ]*"))
-		(unless (string-prefix-p "-" p)
-		  (newline))
-		(insert p)
-		(call-interactively #'org-fill-paragraph)
+		(when notes
+			(newline-and-indent)
+			(dolist (p (split-string
+									(subst-char-in-string
+									 ?\u00a0 ?\u0020 ; Replace non-breaking-space with space
+									 (decode-coding-string notes 'utf-8-unix) t)
+									"[\n\r]" t "[\n\r ]*"))
+				(unless (string-prefix-p "-" p)
+					(newline))
+				(insert p)
+				(call-interactively #'org-fill-paragraph)
+				(newline 2)
+				(delete-blank-lines)))
 		(newline 2)
 		(delete-blank-lines)))
-	(newline 2)
-	(delete-blank-lines)))
 
 (defun asana-task-browse (task-gid)
   "Browse to an Asana task by TASK-ID using `browse-url'."
