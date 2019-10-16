@@ -605,6 +605,25 @@ Slow for large projects!"
 																			(asana-fold-sections tasks)))))
 			 (asana-tasks-fetch-data gids #'asana-tasks-org-digest)))))
 
+(defun asana-org-sync-task-at-point ()
+  "Sync task at point with Asana by ASANA_ID property"
+  (interactive)
+	(eval-and-compile
+		(require 'org)
+		(require 'org-indent))
+	(let ((aid (org-entry-get nil "ASANA_ID")))
+		(if (not aid)
+				(message "No ASANA_ID property at current point")
+			(let* ((task-gid (string-trim-left aid ".+-"))
+						 (asana-selected-workspace-gid (string-trim-right aid "-.+"))
+						 (props (asana-get-task task-gid))
+						 (stories (asana-get-task-stories task-gid)))
+				(org-narrow-to-subtree)
+				(asana-task-org-sync props stories)
+				(widen)
+				(org-element-cache-reset)
+				(org-indent-indent-buffer)))))
+
 (defun asana-tasks-org-digest (tasks)
   "Dump TASKS into an org buffer backed by `asana-tasks-org-file'."
   (eval-and-compile
