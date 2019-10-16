@@ -81,7 +81,7 @@ Asana free plan limit is 50. Asana premium plan limit is 1500."
 (defvar org-directory)
 (defcustom asana-tasks-org-file
   (expand-file-name "asana.org" (or (and (boundp 'org-directory) org-directory)
-									user-emacs-directory))
+																		user-emacs-directory))
   "Org file to sync Asana tasks into."
   :group 'asana
   :type 'file)
@@ -120,12 +120,12 @@ Asana free plan limit is 50. Asana premium plan limit is 1500."
             def (pop bindings)))
     (reverse ret)))
 
-(defmacro asana-map-marked (candidate-func)
+(defmacro asana-helm-map-marked (candidate-func)
   "Map CANDIDATE-FUNC over the marked helm candidates."
   `(lambda (_)
      (mapcar ,candidate-func (helm-marked-candidates))))
 
-(defmacro asana-exec-marked (candidates-func)
+(defmacro asana-helm-exec-marked (candidates-func)
   "Call CANDIDATES-FUNC and on the list of marked helm candidates."
   `(lambda (_)
      (funcall ,candidates-func (helm-marked-candidates))))
@@ -195,16 +195,16 @@ Asana free plan limit is 50. Asana premium plan limit is 1500."
 (defmacro asana-url-retrieve-callback (&rest body)
   (declare (debug def-body))
   `(let ((error-handler asana-get-async-error-handler))
-	 (lambda (url-retrieve-status &rest _)
-	   (let ((http-error (plist-get url-retrieve-status :error)))
-		 (if (not http-error)
-			 (condition-case callback-error
-				 ,(macroexp-progn body)
-			   (error
-				(message "Asana API error: %S" callback-error)
-				(funcall error-handler (cdr callback-error))))
-		   (message "Asana HTTP error: %s" http-error)
-		   (funcall error-handler http-error))))))
+		 (lambda (url-retrieve-status &rest _)
+			 (let ((http-error (plist-get url-retrieve-status :error)))
+				 (if (not http-error)
+						 (condition-case callback-error
+								 ,(macroexp-progn body)
+							 (error
+								(message "Asana API error: %S" callback-error)
+								(funcall error-handler (cdr callback-error))))
+					 (message "Asana HTTP error: %s" http-error)
+					 (funcall error-handler http-error))))))
 
 ;; API
 
@@ -217,39 +217,44 @@ Asana free plan limit is 50. Asana premium plan limit is 1500."
 (defvar asana-get-async-queue-start-time nil)
 (define-advice url-queue-run-queue (:around (f) "asana")
   (if (and url-queue
-		   (seq-some (lambda (job) (string-prefix-p asana-api-root (url-queue-url job))) url-queue))
-	  (let ((url-queue-parallel-processes asana-api-concurrent-requests)
-			(url-queue-timeout asana-api-timeout))
-		(unless asana-get-async-queue
-		  (setq asana-get-async-queue url-queue
-				asana-get-async-queue-start-time (float-time)))
-		(when (or
-			   (< (- (float-time) asana-get-async-queue-start-time) 60) ; Ignore first minute
-			   (< (/ (- (length asana-get-async-queue) (length url-queue))
-					 (- (float-time) asana-get-async-queue-start-time))
-				  (/ 60.0 asana-api-requests-per-minute)))
-		  (funcall f)))
-	(setq asana-get-async-queue nil
-		  asana-get-async-queue-start-time nil)
-	(funcall f)))
+					 (seq-some (lambda (job) (string-prefix-p asana-api-root (url-queue-url job))) url-queue))
+			(let ((url-queue-parallel-processes asana-api-concurrent-requests)
+						(url-queue-timeout asana-api-timeout))
+				(unless asana-get-async-queue
+					(setq asana-get-async-queue url-queue
+								asana-get-async-queue-start-time (float-time)))
+				(when (or
+							 (< (- (float-time) asana-get-async-queue-start-time) 60) ; Ignore first minute
+							 (< (/ (- (length asana-get-async-queue) (length url-queue))
+										 (- (float-time) asana-get-async-queue-start-time))
+									(/ 60.0 asana-api-requests-per-minute)))
+					(funcall f)))
+		(setq asana-get-async-queue nil
+					asana-get-async-queue-start-time nil)
+		(funcall f)))
 
 (define-advice url-queue-start-retrieve (:around (f job) "asana")
   (if (string-prefix-p asana-api-root (url-queue-url job))
-	  (let ((url-request-extra-headers (asana-headers-with-auth)))
-		(funcall f job))
-	(funcall f job)))
+			(let ((url-request-extra-headers (asana-headers-with-auth)))
+				(funcall f job))
+		(funcall f job)))
 
 (defun asana-get-async (url &optional callback)
   "Internal asynchronous API fetcher"
-  (url-queue-retrieve
-   url
-   (asana-url-retrieve-callback
-	(funcall callback (asana-read-response (current-buffer))))))
+  (let ((m (point-marker)))
+		(url-queue-retrieve
+		 url
+		 (asana-url-retrieve-callback
+			(let ((resp (asana-read-response (current-buffer))))
+				(switch-to-buffer (marker-buffer m))
+				(goto-char m)
+				(funcall callback resp))))))
 
 (defun asana-get-sync (url)
   "Internal synchronous API fetcher"
-  (let ((url-request-extra-headers (asana-headers-with-auth)))
-    (asana-read-response (url-retrieve-synchronously url nil nil asana-api-timeout))))
+  (save-excursion
+		(let ((url-request-extra-headers (asana-headers-with-auth)))
+			(asana-read-response (url-retrieve-synchronously url nil nil asana-api-timeout)))))
 
 (defun asana-get (resource &optional params callback)
   "Send an HTTP GET to the Asana API for RESOURCE with PARAMS as the query string.
@@ -257,12 +262,12 @@ If CALLBACK is provided, it is called after completion as (funcall CALLBACK DATA
 DATA is a list parsed from the JSON API response."
   (let ((url (concat asana-api-root resource "?"
                      (mapconcat
-					  (lambda (param) (concat (car param) "=" (cdr param)))
-					  params
-					  "&"))))
-	(if callback
-		(asana-get-async url callback)
-	  (asana-get-sync url))))
+											(lambda (param) (concat (car param) "=" (cdr param)))
+											params
+											"&"))))
+		(if callback
+				(asana-get-async url callback)
+			(asana-get-sync url))))
 
 (defun asana-request (method resource params callback)
   "Send a HTTP METHOD request to the Asana RESOURCE API. Include PARAMS as a JSON data blob. If CALLBACK is provided, run asynchronously and call it on completion."
@@ -272,9 +277,9 @@ DATA is a list parsed from the JSON API response."
         (url (concat asana-api-root resource)))
     (if callback
         (url-queue-retrieve
-		 url
-		 (asana-url-retrieve-callback
-		  (lambda (&rest _) (funcall callback (asana-read-response (current-buffer))))))
+				 url
+				 (asana-url-retrieve-callback
+					(lambda (&rest _) (funcall callback (asana-read-response (current-buffer))))))
       (asana-read-response (url-retrieve-synchronously url nil nil asana-api-timeout)))))
 
 (defun asana-post (resource &optional params callback)
@@ -289,7 +294,6 @@ DATA is a list parsed from the JSON API response."
   "Send a HTTP DELETE request to the Asana RESOURCE API. Include PARAMS as a JSON data blob. If CALLBACK is provided, run asynchronously."
   (asana-request "DELETE" resource params callback))
 
-
 (defun asana-get-workspaces (&optional callback)
   "Get all Asana workspaces. If CALLBACK is provided, run asynchronously."
   (asana-assocdr 'workspaces (asana-get "/users/me" nil callback)))
@@ -300,7 +304,7 @@ DATA is a list parsed from the JSON API response."
   (asana-get (concat "/projects/" asana-my-user-task-list-gid "/sections")
              callback))
 
-(defun asana-get-tasks (&optional callback)
+(defun asana-get-my-open-tasks (&optional callback)
   "Get all Asana tasks assigned-to-me in the current Workspace. If CALLBACK is provided, run asynchronously."
   (asana-get "/tasks" `(("workspace" . ,asana-selected-workspace-gid)
                         ("opt_fields" . "gid,name,assignee_status")
@@ -324,9 +328,10 @@ DATA is a list parsed from the JSON API response."
 
 (defun asana-invalidate-task-cache ()
   "Clear and re-populate the Asana task cache."
-  (asana-get-tasks (lambda (tasks)
-                     (setq asana-task-cache (mapcar 'asana-task-helm-data (asana-fold-sections (asana-filter-later tasks))))
-                     (and helm-alive-p (helm-update))))
+  (asana-get-my-open-tasks
+	 (lambda (tasks)
+     (setq asana-task-cache (mapcar 'asana-task-helm-data (asana-fold-sections (asana-filter-later tasks))))
+     (and helm-alive-p (helm-update))))
   (setq asana-section-cache nil))
 
 ;; Helm
@@ -341,9 +346,9 @@ DATA is a list parsed from the JSON API response."
                ("Move to section `C-:'" . asana-task-move-to-section)
                ("Complete `C-RET'" . asana-task-complete)
                ("Delete `C-DEL'" . asana-task-delete)
-               ("Move marked Tasks `M-:'" . ,(asana-exec-marked 'asana-tasks-move-to-section))
-               ("Complete marked Tasks `M-RET'" . ,(asana-map-marked 'asana-task-complete))
-               ("Delete marked Tasks `M-DEL'" . ,(asana-map-marked 'asana-task-delete))))
+               ("Move marked Tasks `M-:'" . ,(asana-helm-exec-marked 'asana-tasks-move-to-section))
+               ("Complete marked Tasks `M-RET'" . ,(asana-helm-map-marked 'asana-task-complete))
+               ("Delete marked Tasks `M-DEL'" . ,(asana-helm-map-marked 'asana-task-delete))))
     (keymap . ,(let ((map (make-sparse-keymap)))
                  (set-keymap-parent map helm-map)
                  (asana-define-key map
@@ -351,9 +356,9 @@ DATA is a list parsed from the JSON API response."
                    (kbd "C-:") 'asana-task-move-to-section
                    (kbd "<C-return>") 'asana-task-complete
                    (kbd "<C-backspace>") 'asana-task-delete
-                   (kbd "M-:") (asana-exec-marked 'asana-tasks-move-to-section)
-                   (kbd "<M-return>") (asana-map-marked 'asana-task-complete)
-                   (kbd "<M-backspace>") (asana-map-marked 'asana-task-delete))
+                   (kbd "M-:") (asana-helm-exec-marked 'asana-tasks-move-to-section)
+                   (kbd "<M-return>") (asana-helm-map-marked 'asana-task-complete)
+                   (kbd "<M-backspace>") (asana-helm-map-marked 'asana-task-delete))
                  map))))
 
 (defun asana-section-helm-source ()
@@ -409,11 +414,11 @@ DATA is a list parsed from the JSON API response."
 (defun asana-task-insert-as-org (task stories)
   "Insert an org-formatted Asana TASK with STORIES into the current buffer."
   (eval-and-compile
-	(require 'org))
+		(require 'org))
   (let ((closed (eq (map-elt task 'completed) t))
         (has-schedule (map-elt task 'start_on))
         (has-deadline (map-elt task 'due_on))
-		(tags (map-elt task 'tags))
+				(tags (map-elt task 'tags))
         (notes (map-elt task 'notes))
         (liked (eq (map-elt task 'liked) t))
         (hearted (eq (map-elt task 'hearted) t)))
@@ -423,11 +428,11 @@ DATA is a list parsed from the JSON API response."
       (map-elt task 'name)
       (if tags
           (format
-		   "   %s:"
-		   (apply 'concat
-				  (seq-map (lambda (tag) (concat ":" (map-elt tag 'name))) tags)))
-		"")))
-	(if tags (org-align-tags))
+					 "   %s:"
+					 (apply 'concat
+									(seq-map (lambda (tag) (concat ":" (map-elt tag 'name))) tags)))
+				"")))
+		(if tags (org-align-tags))
     (insert
      (format
       "%s%s%s"
@@ -583,28 +588,40 @@ Append newly discovered tasks.
 
 Slow for large projects!"
   (interactive)
+	(eval-and-compile
+		(require 'org)
+		(require 'org-indent))
+	(switch-to-buffer (find-file asana-tasks-org-file))
   (message "Fetching tasks...")
-  (asana-get-tasks
+  (asana-get-my-open-tasks
    (lambda (tasks)
-	 (asana-tasks-fetch-data
-	  (seq-group-by (lambda (task) (map-elt task 'id))
-					(asana-fold-sections (asana-filter-later tasks)))
-	  #'asana-tasks-org-digest))))
+		 (let* ((existent
+						 (mapcar (lambda (id) (list (string-trim-left id ".+-")))
+										 (remove nil (org-map-entries
+																	(lambda () (org-entry-get nil "ASANA_ID"))
+																	(format "+ASANA_ID={.}+%s" (or query ""))))))
+						(gids
+						 (append existent (mapcar (lambda (task) (list (map-elt task 'gid)))
+																			(asana-fold-sections tasks)))))
+			 (asana-tasks-fetch-data gids #'asana-tasks-org-digest)))))
 
 (defun asana-tasks-org-digest (tasks)
   "Dump TASKS into an org buffer backed by `asana-tasks-org-file'."
   (eval-and-compile
-	(require 'org)
-	(require 'org-indent))
+		(require 'org)
+		(require 'org-indent))
   (switch-to-buffer (find-file asana-tasks-org-file))
+	(goto-char (point-min))
+  (unless (re-search-forward "^* Asana" nil t)
+		(goto-char (point-max))
+		(newline 2)
+		(insert "* Asana"))
   (seq-doseq (task tasks)
     (asana-task-org-sync (map-elt task 'props) (map-elt task 'stories)))
   (org-element-cache-reset)
   (org-indent-indent-buffer)
-  (goto-char (point-min))
-  (org-next-visible-heading 1)
   (org-sort-entries nil ?r nil nil "CREATED_AT")
-  (org-global-cycle '(4)))
+  (org-content 2))
 
 (defvar org-log-done)
 (defun asana-task-org-sync (task stories)
@@ -617,22 +634,23 @@ Slow for large projects!"
                      (map-nested-elt task '(workspace gid))
                      (map-elt task 'gid))))
            id todo-state)
-      (if existing
-          (progn
-            (goto-char existing)
-            (setq id (org-id-get-create))
-            (setq todo-state (org-get-todo-state))
-            (org-cut-special))
-        (goto-char (point-max)))
-      (org-insert-heading-respect-content)
-	  (asana-task-insert-as-org task stories)
+      (cond (existing
+						 (goto-char existing)
+						 (setq id (org-id-get-create))
+						 (setq todo-state (org-get-todo-state))
+						 (save-excursion (org-insert-heading-respect-content))
+						 (org-cut-special)
+						 (end-of-line))
+						(t (goto-char (point-max))
+							 (org-insert-heading-respect-content)))
+			(asana-task-insert-as-org task stories)
       (org-back-to-heading)
-	  (if (eq (map-elt task 'completed) t)
-		  (let (org-log-done)
-			(org-todo (or (car-safe (member todo-state org-done-keywords))
-						  'done)))
-		(org-todo (or (car-safe (member todo-state org-not-done-keywords))
-					  'nextset)))
+			(if (eq (map-elt task 'completed) t)
+					(let (org-log-done)
+						(org-todo (or (car-safe (member todo-state org-done-keywords))
+													'done)))
+				(org-todo (or (car-safe (member todo-state org-not-done-keywords))
+											'nextset)))
       (when id (org-entry-put (point) "ID" id)))))
 
 (defun asana-section-select (section)
