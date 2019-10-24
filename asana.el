@@ -60,7 +60,7 @@
   :group 'asana
   :type '(choice (const :lisp) (const :org)))
 
-(defcustom asana-api-concurrent-requests 45
+(defcustom asana-api-concurrent-requests 24
   "The number of concurrent requests to Asana API.
 Asana API has a hard limit of 50."
   :group 'asana
