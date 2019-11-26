@@ -5,7 +5,7 @@
 ;; Author: Leo Martel <leo@lpm.io>
 ;;         Renato Ferreira <renatofdds@gmail.com>
 ;; Maintainer: Leo Martel <leo@lpm.io>
-;; Version: 0.2.1
+;; Version: 0.3.0
 ;; Keywords: comm outlines tools
 ;; Homepage: https://github.com/lmartel/emacs-asana
 ;; Package-Requires: ((emacs "25.1") (helm "1.9"))
@@ -26,22 +26,21 @@
 ;;; Commentary:
 
 ;; This package provides utilities for working with Asana (https://asana.com) tasks:
-;; - Create tasks from the minibuffer
-;; - Dump your tasks to org-mode TODOs
-;; - List and act on your tasks in bulk with `helm' extensions
-;;
-;; The minor mode `asana-mode' provides a keymap, or just call the interactive `asana-*'
-;; functions directly with M-x.
+;; - `asana-create-task' and `asana-create-task-quickly' Create tasks from the minibuffer
+;; - `asana-org-sync-tasks' and `asana-org-sync-task-at-point' Dump your tasks to org-mode TODOs
+;; - `asana-helm' List and act on your tasks in bulk with `helm' extensions
 
 ;;; Code:
 
 (eval-when-compile
-  (require 'cl-seq))
+  (require 'cl-lib)
+	(require 'subr-x))
 (require 'helm)
 (require 'json)
 (require 'map)
 (require 'url)
 (require 'url-http)
+(require 'url-queue)
 
 ;; User config variables
 
@@ -52,6 +51,7 @@
 
 (defvar asana-token-env-var "ASANA_TOKEN"
   "Name of environment variable to check for an Asana personal access token. If nil or not found, fall back to `asana-token'.")
+
 (defvar asana-token nil
   "If non-nil, use this instead of checking the environment variable `asana-token-env-var'.")
 
@@ -60,8 +60,27 @@
   :group 'asana
   :type '(choice (const :lisp) (const :org)))
 
+(defcustom asana-api-concurrent-requests 24
+  "The number of concurrent requests to Asana API.
+Asana API has a hard limit of 50."
+  :group 'asana
+  :type 'integer)
+
+(defcustom asana-api-requests-per-minute 150
+  "The number of concurrent requests to Asana API.
+Asana free plan limit is 50. Asana premium plan limit is 1500."
+  :group 'asana
+  :type 'integer)
+
+(defcustom asana-api-timeout 60
+  "Number of seconds to timeout requests to Asana API."
+  :group 'asana
+  :type 'integer)
+
 (defvar org-directory)
-(defcustom asana-tasks-org-file (expand-file-name "asana.org" org-directory)
+(defcustom asana-tasks-org-file
+  (expand-file-name "asana.org" (or (and (boundp 'org-directory) org-directory)
+																		user-emacs-directory))
   "Org file to sync Asana tasks into."
   :group 'asana
   :type 'file)
@@ -70,10 +89,11 @@
 
 (defconst asana-api-root "https://app.asana.com/api/1.0")
 
-(defvar asana-my-tasks-project-id nil)
-(defvar asana-selected-workspace nil)
+(defvar asana-my-user-task-list-gid nil)
+(defvar asana-selected-workspace-gid nil)
+(defvar asana-selected-workspace-name nil)
 (defvar asana-selected-section nil)
-(defvar asana-selected-task-ids nil)
+(defvar asana-selected-task-gids nil)
 (defvar asana-task-cache nil)
 (defvar asana-section-cache nil)
 
@@ -99,12 +119,12 @@
             def (pop bindings)))
     (reverse ret)))
 
-(defmacro asana-map-marked (candidate-func)
+(defmacro asana-helm-map-marked (candidate-func)
   "Map CANDIDATE-FUNC over the marked helm candidates."
   `(lambda (_)
      (mapcar ,candidate-func (helm-marked-candidates))))
 
-(defmacro asana-exec-marked (candidates-func)
+(defmacro asana-helm-exec-marked (candidates-func)
   "Call CANDIDATES-FUNC and on the list of marked helm candidates."
   `(lambda (_)
      (funcall ,candidates-func (helm-marked-candidates))))
@@ -124,7 +144,7 @@
 
 (defun asana-filter-later (tasks)
   "Filter out tasks marked as later from a list of TASKS."
-  (cl-remove-if (lambda (task) (equal (asana-assocdr 'assignee_status task) "later")) tasks))
+  (seq-filter (lambda (task) (equal (asana-assocdr 'assignee_status task) "later")) tasks))
 
 (defun asana-fold-sections (tasks)
   "Remove section placeholders from a list of TASKS and prefix task names with [SECTION] instead."
@@ -144,48 +164,105 @@
                        task))))
             tasks)))
       (setq asana-selected-section prev-section)
-      (cl-remove-if 'null tasks-with-sections))))
+      (delete 'null tasks-with-sections))))
 
 (defun asana-headers-with-auth (&optional extra-headers)
   "Create an HTTP headers list from the configured Asana token, appending EXTRA-HEADERS if any."
   (append `(("Authorization" . ,(concat "Bearer " (asana-get-token)))) extra-headers))
 
+(define-error 'asana-api-error "Asana API error")
+
 (defvar url-http-end-of-headers)
 (defun asana-read-response (buf)
   "Read the raw Asana API response from BUF, surfacing errors if any and returning the data payload otherwise."
   (let* ((json-array-type 'list)
-         (response (json-read-from-string (with-current-buffer buf
-                                            (set-buffer-multibyte t)
-                                            (goto-char url-http-end-of-headers)
-                                            (delete-region (point-min) (point))
-                                            (buffer-string))))
-         (errs (assoc 'errors response)))
-    (if errs
-        (error (concat "Asana API error: " (mapconcat (lambda (err) (asana-assocdr 'message err)) (cdr errs) "\n")))
-      (asana-assocdr 'data response))))
+				 (response
+					(json-read-from-string
+					 (with-current-buffer buf
+             (set-buffer-multibyte t)
+						 (goto-char url-http-end-of-headers)
+						 (delete-region (point-min) (point))
+						 (buffer-string))))
+				 (errors (map-elt response 'errors)))
+		(when errors
+			(let (messages)
+				(seq-doseq (err (cdr errors)) (push (map-elt err 'message) messages))
+				(signal 'asana-api-error messages)))
+		(map-elt response 'data)))
 
-(defun asana-read-response-async (_)
-  "Read an Asana API response from the async results buffer."
-  (asana-read-response (current-buffer)))
+(defvar asana-get-async-error-handler (lambda (_error-data)))
+(defmacro asana-url-retrieve-callback (&rest body)
+  (declare (debug def-body))
+  `(let ((error-handler asana-get-async-error-handler))
+		 (lambda (url-retrieve-status &rest _)
+			 (let ((http-error (plist-get url-retrieve-status :error)))
+				 (if (not http-error)
+						 (condition-case callback-error
+								 ,(macroexp-progn body)
+							 (error
+								(message "Asana API error: %S" callback-error)
+								(funcall error-handler (cdr callback-error))))
+					 (message "Asana HTTP error: %s" http-error)
+					 (funcall error-handler http-error))))))
 
 ;; API
 
+(defvar url-request-extra-headers)
+(defvar url-request-method)
+(defvar url-request-data)
+(defvar url-queue-parallel-processes)
+(defvar url-queue-timeout)
+(defvar asana-get-async-queue nil)
+(defvar asana-get-async-queue-start-time nil)
+(define-advice url-queue-run-queue (:around (f) "asana")
+  (if (and url-queue
+					 (seq-some (lambda (job) (string-prefix-p asana-api-root (url-queue-url job))) url-queue))
+			(let ((url-queue-parallel-processes asana-api-concurrent-requests)
+						(url-queue-timeout asana-api-timeout))
+				(unless asana-get-async-queue
+					(setq asana-get-async-queue url-queue
+								asana-get-async-queue-start-time (float-time)))
+				(when (or
+							 (< (- (float-time) asana-get-async-queue-start-time) 60) ; Ignore first minute
+							 (< (/ (- (length asana-get-async-queue) (length url-queue))
+										 (- (float-time) asana-get-async-queue-start-time))
+									(/ 60.0 asana-api-requests-per-minute)))
+					(funcall f)))
+		(setq asana-get-async-queue nil
+					asana-get-async-queue-start-time nil)
+		(funcall f)))
+
+(define-advice url-queue-start-retrieve (:around (f job) "asana")
+  (if (string-prefix-p asana-api-root (url-queue-url job))
+			(let ((url-request-extra-headers (asana-headers-with-auth)))
+				(funcall f job))
+		(funcall f job)))
+
+(defun asana-get-async (url &optional callback)
+  "Internal asynchronous API fetcher"
+  (url-queue-retrieve
+	 url
+	 (asana-url-retrieve-callback
+		(funcall callback (asana-read-response (current-buffer))))))
+
+(defun asana-get-sync (url)
+  "Internal synchronous API fetcher"
+  (save-excursion
+		(let ((url-request-extra-headers (asana-headers-with-auth)))
+			(asana-read-response (url-retrieve-synchronously url nil nil asana-api-timeout)))))
+
 (defun asana-get (resource &optional params callback)
-  "Send an HTTP GET to the Asana API for RESOURCE. Include PARAMS in the query string. If CALLBACK is provided, run asynchronously and call it on completion."
-  (let ((url-request-method "GET")
-        (url-request-extra-headers (asana-headers-with-auth))
-        (url (concat asana-api-root
-                     resource
-                     "?"
-                     (mapconcat (lambda (param)
-                                  (concat (url-hexify-string (car param))
-                                          "="
-                                          (url-hexify-string (cdr param))))
-                                params
-                                "&"))))
-    (if callback
-        (url-retrieve url (asana-compose callback 'asana-read-response-async))
-      (asana-read-response (url-retrieve-synchronously url)))))
+  "Send an HTTP GET to the Asana API for RESOURCE with PARAMS as the query string.
+If CALLBACK is provided, it is called after completion as (funcall CALLBACK DATA).
+DATA is a list parsed from the JSON API response."
+  (let ((url (concat asana-api-root resource "?"
+                     (mapconcat
+											(lambda (param) (concat (car param) "=" (cdr param)))
+											params
+											"&"))))
+		(if callback
+				(asana-get-async url callback)
+			(asana-get-sync url))))
 
 (defun asana-request (method resource params callback)
   "Send a HTTP METHOD request to the Asana RESOURCE API. Include PARAMS as a JSON data blob. If CALLBACK is provided, run asynchronously and call it on completion."
@@ -194,8 +271,11 @@
         (url-request-data (json-encode `(("data" . ,params))))
         (url (concat asana-api-root resource)))
     (if callback
-        (url-retrieve url (asana-compose callback 'asana-read-response-async))
-      (asana-read-response (url-retrieve-synchronously url)))))
+        (url-queue-retrieve
+				 url
+				 (asana-url-retrieve-callback
+					(lambda (&rest _) (funcall callback (asana-read-response (current-buffer))))))
+      (asana-read-response (url-retrieve-synchronously url nil nil asana-api-timeout)))))
 
 (defun asana-post (resource &optional params callback)
   "Send a HTTP POST request to the Asana RESOURCE API. Include PARAMS as a JSON data blob. If CALLBACK is provided, run asynchronously."
@@ -209,7 +289,6 @@
   "Send a HTTP DELETE request to the Asana RESOURCE API. Include PARAMS as a JSON data blob. If CALLBACK is provided, run asynchronously."
   (asana-request "DELETE" resource params callback))
 
-
 (defun asana-get-workspaces (&optional callback)
   "Get all Asana workspaces. If CALLBACK is provided, run asynchronously."
   (asana-assocdr 'workspaces (asana-get "/users/me" nil callback)))
@@ -217,25 +296,24 @@
 ;; unused
 (defun asana-get-sections (&optional callback)
   "Get all Asana sections within the current project. If CALLBACK is provided, run asynchronously."
-  (asana-get (concat "/projects/" asana-my-tasks-project-id "/sections") `(("limit" . "100"))
+  (asana-get (concat "/projects/" asana-my-user-task-list-gid "/sections")
              callback))
 
-(defun asana-get-tasks (&optional callback)
-  "Get all Asana tasks (limit 100) assigned-to-me in the current Workspace. If CALLBACK is provided, run asynchronously."
-  (asana-get "/tasks" `(("workspace" . ,(number-to-string (asana-assocdr 'id asana-selected-workspace)))
-                        ("opt_fields" . "id,name,assignee_status")
-                        ("limit" . "100")
+(defun asana-get-my-open-tasks (&optional callback)
+  "Get all Asana tasks assigned-to-me in the current Workspace. If CALLBACK is provided, run asynchronously."
+  (asana-get "/tasks" `(("workspace" . ,asana-selected-workspace-gid)
+                        ("opt_fields" . "gid,name,assignee_status")
                         ("assignee" . "me")
                         ("completed_since" . "now"))
              callback))
 
-(defun asana-get-task (task-id &optional callback)
-  "Get an Asana task by TASK-ID. If CALLBACK is provided, run asynchronously."
-  (asana-get (concat "/tasks/" (number-to-string task-id)) nil callback))
+(defun asana-get-task (task-gid &optional callback)
+  "Get an Asana task by TASK-GID. If CALLBACK is provided, run asynchronously."
+  (asana-get (concat "/tasks/" task-gid) nil callback))
 
-(defun asana-get-task-stories (task-id &optional callback)
-  "Get the stories (comments, edit history, etc) for an Asana task by TASK-ID. If CALLBACK is provided, run asynchronously."
-  (asana-get (concat "/tasks/" (number-to-string task-id) "/stories") nil callback))
+(defun asana-get-task-stories (task-gid &optional callback)
+  "Get the stories (comments, edit history, etc) for an Asana task by TASK-GID. If CALLBACK is provided, run asynchronously."
+  (asana-get (concat "/tasks/" task-gid "/stories") nil callback))
 
 ;; Caching
 
@@ -245,26 +323,27 @@
 
 (defun asana-invalidate-task-cache ()
   "Clear and re-populate the Asana task cache."
-  (asana-get-tasks (lambda (tasks)
-                     (setq asana-task-cache (mapcar 'asana-task-helm-data (asana-fold-sections (asana-filter-later tasks))))
-                     (and helm-alive-p (helm-update))))
-  (setq asana-section-cache nil))
+	(setq asana-section-cache nil)
+  (asana-get-my-open-tasks
+	 (lambda (tasks)
+     (setq asana-task-cache (mapcar 'asana-task-helm-data (asana-fold-sections (asana-filter-later tasks))))
+     (and helm-alive-p (helm-update)))))
 
 ;; Helm
 
 (defun asana-task-helm-source ()
   "Build a Helm source from My Asana Tasks in the current workspace."
-  `((name . ,(concat "My Asana Tasks in " (asana-assocdr 'name asana-selected-workspace)))
+  `((name . ,(concat "My Asana Tasks in " asana-selected-workspace-name))
     (candidates . ,(lambda () asana-task-cache))
     (volatile)
-    (action . (("Select `RET'" . asana-task-select)
+    (action . (("Select `RET'" . asana-task-get-and-display)
                ("Browse (open in Asana) `C-b'" . asana-task-browse)
                ("Move to section `C-:'" . asana-task-move-to-section)
                ("Complete `C-RET'" . asana-task-complete)
                ("Delete `C-DEL'" . asana-task-delete)
-               ("Move marked Tasks `M-:'" . ,(asana-exec-marked 'asana-tasks-move-to-section))
-               ("Complete marked Tasks `M-RET'" . ,(asana-map-marked 'asana-task-complete))
-               ("Delete marked Tasks `M-DEL'" . ,(asana-map-marked 'asana-task-delete))))
+               ("Move marked Tasks `M-:'" . ,(asana-helm-exec-marked 'asana-tasks-move-to-section))
+               ("Complete marked Tasks `M-RET'" . ,(asana-helm-map-marked 'asana-task-complete))
+               ("Delete marked Tasks `M-DEL'" . ,(asana-helm-map-marked 'asana-task-delete))))
     (keymap . ,(let ((map (make-sparse-keymap)))
                  (set-keymap-parent map helm-map)
                  (asana-define-key map
@@ -272,9 +351,9 @@
                    (kbd "C-:") 'asana-task-move-to-section
                    (kbd "<C-return>") 'asana-task-complete
                    (kbd "<C-backspace>") 'asana-task-delete
-                   (kbd "M-:") (asana-exec-marked 'asana-tasks-move-to-section)
-                   (kbd "<M-return>") (asana-map-marked 'asana-task-complete)
-                   (kbd "<M-backspace>") (asana-map-marked 'asana-task-delete))
+                   (kbd "M-:") (asana-helm-exec-marked 'asana-tasks-move-to-section)
+                   (kbd "<M-return>") (asana-helm-map-marked 'asana-task-complete)
+                   (kbd "<M-backspace>") (asana-helm-map-marked 'asana-task-delete))
                  map))))
 
 (defun asana-section-helm-source ()
@@ -285,26 +364,16 @@
     (action . (("Select `RET'" . asana-section-select)))))
 
 (defun asana-task-helm-data (task)
-  "Build a (name . id) Helm data element from an Asana TASK."
-  `(,(asana-assocdr 'name task) . ,(asana-assocdr 'id task)))
+  "Build a (name . gid) Helm data element from an Asana TASK."
+  `(,(asana-assocdr 'name task) . ,(asana-assocdr 'gid task)))
 
 (defun asana-section-helm-data (section)
   "Build a (name . data) Helm data element from an Asana SECTION."
   `(,(asana-assocdr 'name section) . ,section))
 
-(defun asana-task-select (task-id)
-  "Select (display) a task by TASK-ID."
-  (let ((task-id task-id))
-    (asana-get-task
-     task-id
-     (lambda (task)
-       (asana-display-task task (asana-get-task-stories task-id))))))
-
-(defmacro asana-recode (&rest body)
-  "Run BODY then recode the newly-added buffer content."
-  `(let ((pt (point)))
-     ,@body
-     (recode-region pt (point) 'utf-8-unix 'utf-8-unix)))
+(defun asana-task-get-and-display (task-gid)
+  "Fetch task and stories by TASK-ID then display it."
+  (asana-display-task (asana-get-task task-gid) (asana-get-task-stories task-gid)))
 
 (defvar org-startup-folded)
 (declare-function org-insert-heading-respect-content "org")
@@ -320,15 +389,13 @@
     (erase-buffer)
     (pcase asana-task-buffer-format
       (:lisp
-       (asana-recode
-        (asana-task-insert-as-lisp task stories))
+       (asana-task-insert-as-lisp task stories)
        (emacs-lisp-mode))
       (:org
        (let ((org-startup-folded 'showeverything))
          (org-mode)
          (org-insert-heading-respect-content)
-         (asana-recode
-          (asana-task-insert-as-org task stories)))))
+         (asana-task-insert-as-org task stories))))
     (goto-char pt)
     (view-mode)))
 
@@ -341,24 +408,26 @@
 
 (defun asana-task-insert-as-org (task stories)
   "Insert an org-formatted Asana TASK with STORIES into the current buffer."
-  (let ((closed (eql (map-elt task 'completed) :json-true))
+  (eval-and-compile
+		(require 'org))
+  (let ((closed (eq (map-elt task 'completed) t))
         (has-schedule (map-elt task 'start_on))
         (has-deadline (map-elt task 'due_on))
-		(tags (map-elt task 'tags))
+				(tags (map-elt task 'tags))
         (notes (map-elt task 'notes))
-        (liked (eql (map-elt task 'liked) :json-true))
-        (hearted (eql (map-elt task 'hearted) :json-true)))
+        (liked (eq (map-elt task 'liked) t))
+        (hearted (eq (map-elt task 'hearted) t)))
     (insert
      (format
       "%s%s\n"
       (map-elt task 'name)
       (if tags
           (format
-		   "   %s:"
-		   (apply 'concat
-				  (seq-map (lambda (tag) (concat ":" (map-elt tag 'name))) tags)))
-		"")))
-	(if tags (org-align-tags))
+					 "   %s:"
+					 (apply 'concat
+									(seq-map (lambda (tag) (concat ":" (map-elt tag 'name))) tags)))
+				"")))
+		(if tags (org-align-tags))
     (insert
      (format
       "%s%s%s"
@@ -395,13 +464,13 @@
     (insert
      (format
       ":ASANA_ID: %s-%s\n"
-      (map-nested-elt task '(workspace id))
-      (map-elt task 'id)))
+      (map-nested-elt task '(workspace gid))
+      (map-elt task 'gid)))
     (insert
      (format
       ":ASANA_URL: [[https://app.asana.com/0/%s/%s]]\n"
-      (map-nested-elt task '(workspace id))
-      (map-elt task 'id)))
+      (map-nested-elt task '(workspace gid))
+      (map-elt task 'gid)))
     (insert (format ":WORKSPACE: %s\n" (map-nested-elt task '(workspace name))))
     (insert (format ":ASSIGNEE: %s\n" (map-nested-elt task '(assignee name))))
     (insert (format ":ASSIGNEE_STATUS: %s\n" (map-elt task 'assignee_status)))
@@ -442,89 +511,90 @@
         (fill-region p (point) nil nil nil))
       (insert "\n"))
     (insert ":END:\n")
-	(when notes
-	  (newline-and-indent)
-	  (dolist (p (split-string
-				  (subst-char-in-string
-				   ?\u00a0 ?\u0020 ; Replace non-breaking-space with space
-				   (decode-coding-string notes 'utf-8-unix) t)
-				  "[\n]" t "[\n ]*"))
-		(unless (string-prefix-p "-" p)
-		  (newline))
-		(insert p)
-		(call-interactively #'org-fill-paragraph)
+		(when notes
+			(newline-and-indent)
+			(dolist (p (split-string
+									(subst-char-in-string
+									 ?\u00a0 ?\u0020 ; Replace non-breaking-space with space
+									 (decode-coding-string notes 'utf-8-unix) t)
+									"[\n\r]" t "[\n\r ]*"))
+				(unless (string-prefix-p "-" p)
+					(newline))
+				(insert p)
+				(call-interactively #'org-fill-paragraph)
+				(newline 2)
+				(delete-blank-lines)))
 		(newline 2)
 		(delete-blank-lines)))
-	(newline 2)
-	(delete-blank-lines)))
 
-(defun asana-task-browse (task-id)
+(defun asana-task-browse (task-gid)
   "Browse to an Asana task by TASK-ID using `browse-url'."
   (browse-url (concat "https://app.asana.com/0/"
-                      (number-to-string (asana-assocdr 'id asana-selected-workspace))
+                      asana-selected-workspace-gid
                       "/"
-                      (number-to-string task-id))))
+                      task-gid)))
 
-(defun asana-task-move-to-section (task-id)
+(defun asana-task-move-to-section (task-gid)
   "Move one task to a section by TASK-ID."
-  (asana-tasks-move-to-section (list task-id)))
+  (asana-tasks-move-to-section (list task-gid)))
 
-(defun asana-tasks-move-to-section (task-ids)
+(defun asana-tasks-move-to-section (task-gids)
   "Prompt to select a section, then move a list of Asana tasks to it by their TASK-IDS."
-  (setq asana-selected-task-ids task-ids)
+  (setq asana-selected-task-gids task-gids)
   (helm :sources (asana-section-helm-source)
         :buffer "*asana-helm*")
-  (setq asana-selected-task-ids nil))
+  (setq asana-selected-task-gids nil))
 
 (defun asana-tasks-fetch-data (tasks callback)
   "Fetch tasks data and call CALLBACK."
-  (let* ((fetched 0)
-		 (to-fetch (* 2 (length tasks)))
-		 (reporter (make-progress-reporter "Fetching tasks..." 0 to-fetch)))
-	(cl-flet ((check-done
-			   nil
-			   (progress-reporter-update reporter (setq fetched (1+ fetched)))
-			   (when (>= fetched to-fetch)
-				 (progress-reporter-done reporter)
-				 (funcall callback tasks))))
-	  (seq-doseq (task-id (map-keys tasks))
-		(asana-get-task
-		 task-id
-		 (lambda (props)
-		   (map-put (map-elt tasks task-id) 'props props)
-		   (check-done)))
-		(asana-get-task-stories
-		 task-id
-		 (lambda (stories)
-		   (map-put (map-elt tasks task-id) 'stories stories)
-		   (check-done)))))))
-
-(defun asana-org-sync-tasks ()
-  "One-way-sync all available Asana tasks to `asana-tasks-org-file'. Update previously downloaded tasks in-place; append newly discovered tasks. Slow for large projects!"
-  (interactive)
-  (message "Fetching tasks...")
-  (asana-get-tasks
-   (lambda (tasks)
-	 (asana-tasks-fetch-data
-	  (seq-group-by (lambda (task) (map-elt task 'id))
-					(asana-fold-sections (asana-filter-later tasks)))
-	  #'asana-tasks-org-digest))))
+  (let* ((tasks (map-into tasks 'hash-table))
+				 (fetched 0)
+				 (to-fetch (* 2 (map-length tasks)))
+				 (reporter (make-progress-reporter "Fetching tasks..." 0 to-fetch)))
+		(cl-flet ((check-done
+							 nil
+							 (cl-incf fetched)
+							 (progress-reporter-update reporter fetched)
+							 (when (= fetched to-fetch)
+								 (progress-reporter-done reporter)
+								 (funcall callback (map-into tasks 'list)))))
+			(seq-doseq (task-gid (map-keys tasks))
+				(let ((asana-get-async-error-handler
+							 (lambda (_)
+								 (map-delete tasks task-gid)
+								 (check-done))))
+					(asana-get-task
+					 task-gid
+					 (lambda (props)
+						 (when (map-contains-key tasks task-gid)
+							 (map-put (map-elt tasks task-gid) 'props props))
+						 (check-done)))
+					(asana-get-task-stories
+					 task-gid
+					 (lambda (stories)
+						 (when (map-contains-key tasks task-gid)
+							 (map-put (map-elt tasks task-gid) 'stories stories))
+						 (check-done))))))))
 
 (defun asana-tasks-org-digest (tasks)
   "Dump TASKS into an org buffer backed by `asana-tasks-org-file'."
   (eval-and-compile
-    (require 'org)
-    (require 'org-indent))
+		(require 'org)
+		(require 'org-indent))
   (switch-to-buffer (find-file asana-tasks-org-file))
+	(goto-char (point-min))
+  (unless (re-search-forward "^* Asana" nil t)
+		(goto-char (point-max))
+		(newline 2)
+		(insert "* Asana"))
   (seq-doseq (task tasks)
     (asana-task-org-sync (map-elt task 'props) (map-elt task 'stories)))
   (org-element-cache-reset)
   (org-indent-indent-buffer)
-  (goto-char (point-min))
-  (org-next-visible-heading 1)
-  (org-sort-entries nil ?c)
-  (org-global-cycle '(4)))
+  (org-sort-entries nil ?r nil nil "CREATED_AT")
+  (org-content 2))
 
+(defvar org-log-done)
 (defun asana-task-org-sync (task stories)
   "Write one TASK and its STORIES to the current buffer in org format."
   (save-excursion
@@ -532,41 +602,45 @@
             (org-find-property
              "ASANA_ID"
              (format "%s-%s"
-                     (map-nested-elt task '(workspace id))
-                     (map-elt task 'id))))
+                     (map-nested-elt task '(workspace gid))
+                     (map-elt task 'gid))))
            id todo-state)
-      (if existing
-          (progn
-            (goto-char existing)
-            (setq id (org-id-get-create))
-            (setq todo-state (org-get-todo-state))
-            (org-cut-special))
-        (goto-char (point-max)))
-      (asana-recode
-       (org-insert-heading-respect-content)
-       (asana-task-insert-as-org task stories))
+      (cond (existing
+						 (goto-char existing)
+						 (setq id (org-id-get-create))
+						 (setq todo-state (org-get-todo-state))
+						 (save-excursion (org-insert-heading-respect-content))
+						 (org-cut-special)
+						 (end-of-line))
+						(t (goto-char (point-max))
+							 (org-insert-heading-respect-content)))
+			(asana-task-insert-as-org task stories)
       (org-back-to-heading)
-      (org-todo (or todo-state 'nextset))
+			(if (eq (map-elt task 'completed) t)
+					(let (org-log-done)
+						(org-todo (or (car-safe (member todo-state org-done-keywords))
+													'done)))
+				(org-todo (or (car-safe (member todo-state org-not-done-keywords))
+											'nextset)))
       (when id (org-entry-put (point) "ID" id)))))
 
 (defun asana-section-select (section)
   "Select SECTION, moving the previously selected tasks to it."
-  (dolist (task-id asana-selected-task-ids)
-    (let ((task-sid (number-to-string task-id)))
-      (asana-put (concat "/tasks/" task-sid)
-                 `(("assignee_status" . ,(asana-assocdr 'assignee_status section))))
-      (asana-post (concat "/tasks/" task-sid "/addProject")
-                  `(("project" . ,asana-my-tasks-project-id)
-                    ("section" . ,(asana-assocdr 'id section))) ; TODO in theory you can pass assignee_status here instead, but Asana API bug prevents this.
-                  (lambda (data)
-                    (let ((task-name (asana-assocdr 'name data)))
-                      (if data
-                          (message "Unknown error: couldn't move `%s'." task-name)
-                        (message "`%s' moved." task-name))))))))
+  (dolist (task-gid asana-selected-task-gids)
+    (asana-put (concat "/tasks/" task-gid)
+							 `(("assignee_status" . ,(asana-assocdr 'assignee_status section))))
+		(asana-post (concat "/tasks/" task-gid "/addProject")
+								`(("project" . ,asana-my-user-task-list-gid)
+									("section" . ,(asana-assocdr 'gid section))) ; TODO in theory you can pass assignee_status here instead, but Asana API bug prevents this.
+								(lambda (data)
+									(let ((task-name (asana-assocdr 'name data)))
+										(if data
+												(message "Unknown error: couldn't move `%s'." task-name)
+											(message "`%s' moved." task-name)))))))
 
-(defun asana-task-complete (task-id)
+(defun asana-task-complete (task-gid)
   "Complete an Asana task by TASK-ID."
-  (asana-put (concat "/tasks/" (number-to-string task-id))
+  (asana-put (concat "/tasks/" task-gid)
              '(("completed" . t))
              (lambda (data)
                (let ((task-name (asana-assocdr 'name data)))
@@ -574,9 +648,9 @@
                      (message "`%s' completed." task-name)
                    (message "Unknown error: couldn't complete `%s'" task-name))))))
 
-(defun asana-task-delete (task-id)
+(defun asana-task-delete (task-gid)
   "Delete an Asana task by TASK-ID."
-  (asana-delete (concat "/tasks/" (number-to-string task-id))
+  (asana-delete (concat "/tasks/" task-gid)
                 nil
                 (lambda (data)
                   (if data
@@ -594,64 +668,99 @@
   `(,(asana-assocdr 'name workspace) . ,workspace))
 
 (defun asana-workspace-select (workspace)
-  "Select WORKSPACE by id and save the selection with customize."
-  (let* ((workspace-id (number-to-string (asana-assocdr 'id workspace)))
-         (data (asana-get "/users/me" `(("workspace" . ,workspace-id)
-                                        ("opt_fields" . "atm_id")))))
-    (customize-save-variable 'asana-my-tasks-project-id (asana-assocdr 'atm_id data))
-    (customize-save-variable 'asana-selected-workspace workspace)
+  "Select WORKSPACE by gid and save the selection with customize."
+  (let* ((data (asana-get "/users/me/user_task_list" `(("workspace" . ,(asana-assocdr 'gid workspace))))))
+    (customize-save-variable 'asana-my-user-task-list-gid (asana-assocdr 'gid data))
+    (customize-save-variable 'asana-selected-workspace-gid (asana-assocdr 'gid workspace))
+		(customize-save-variable 'asana-selected-workspace-name (asana-assocdr 'name workspace))
     (asana-helm)))
 
 ;; Interactive
 
-(define-minor-mode asana-mode
-  "Minor mode providing key bindings for asana-* comnmands."
-  nil
-  " ⸫"
-  `((,(asana-kbd "<return>") . asana-helm)
-    (,(asana-kbd "a") . asana-helm)
-    (,(asana-kbd "A") . asana-helm-change-workspace)
-    (,(asana-kbd "c") . asana-create-task-quickly)
-    (,(asana-kbd "C") . asana-create-task))
-  :group 'asana)
-
-(define-globalized-minor-mode global-asana-mode asana-mode asana-mode
-  :require 'asana)
-
+;;;###autoload
 (defun asana-create-task (task-name &optional description)
   "Create task TASK-NAME with optional DESCRIPTION. If called interactively, ask for both."
   (interactive "sCreate Asana Task: \nsTask Description: ")
   (asana-post "/tasks" `(("name" . ,task-name)
                          ("notes" . ,(or description ""))
                          ("assignee" . "me")
-                         ("workspace" . ,(number-to-string (asana-assocdr 'id asana-selected-workspace))))
+                         ("workspace" . asana-selected-workspace-gid))
               (lambda (data)
                 (let ((task-name (asana-assocdr 'name data)))
                   (if task-name
                       (message "Created task: `%s'." task-name)
                     (message "Unknown error: couldn't create task."))))))
 
+;;;###autoload
 (defun asana-create-task-quickly (task-name)
   "Create a task TASK-NAME with no description."
   (interactive "sQuick-Create Asana Task: ")
   (asana-create-task task-name))
 
+;;;###autoload
 (defun asana-helm ()
   "Entrypoint for the Asana helm source. Select a workspace if none yet selected, then load the My Tasks list."
   (interactive)
-  (if asana-selected-workspace
+  (if asana-selected-workspace-gid
       (progn (asana-invalidate-task-cache)
              (helm :sources (asana-task-helm-source)
                    :buffer "*asana-helm*"))
     (helm :sources (asana-workspace-helm-source)
           :buffer "*asana-helm*")))
 
+;;;###autoload
 (defun asana-helm-change-workspace ()
   "Change the active workspace used by Asana commands. Alternatively, customize the `asana-selected-workspace' variable."
   (interactive)
-  (customize-save-variable 'asana-selected-workspace nil)
+  (customize-save-variable 'asana-selected-workspace-gid nil)
+  (customize-save-variable 'asana-selected-workspace-name nil)
   (asana-clear-task-cache)
   (asana-helm))
+
+;;;###autoload
+(defun asana-org-sync-tasks (&optional query)
+  "One-way-sync all user own open tasks to `asana-tasks-org-file'.
+Update previously downloaded tasks in-place according to org tags search QUERY;
+Append newly discovered tasks.
+
+Slow for large projects!"
+  (interactive)
+	(eval-and-compile
+		(require 'org)
+		(require 'org-indent))
+  (message "Fetching tasks...")
+  (asana-get-my-open-tasks
+   (lambda (tasks)
+		 (switch-to-buffer (find-file asana-tasks-org-file))
+		 (let* ((existent
+						 (mapcar (lambda (id) (list (string-trim-left id ".+-")))
+										 (remove nil (org-map-entries
+																	(lambda () (org-entry-get nil "ASANA_ID"))
+																	(format "+ASANA_ID={.}+%s" (or query ""))))))
+						(gids
+						 (append existent (mapcar (lambda (task) (list (map-elt task 'gid)))
+																			(asana-fold-sections tasks)))))
+			 (asana-tasks-fetch-data gids #'asana-tasks-org-digest)))))
+
+;;;###autoload
+(defun asana-org-sync-task-at-point ()
+  "Sync task at point with Asana by ASANA_ID property"
+  (interactive)
+	(eval-and-compile
+		(require 'org)
+		(require 'org-indent))
+	(let ((aid (org-entry-get nil "ASANA_ID")))
+		(if (not aid)
+				(message "No ASANA_ID property at current point")
+			(let* ((task-gid (string-trim-left aid ".+-"))
+						 (asana-selected-workspace-gid (string-trim-right aid "-.+"))
+						 (props (asana-get-task task-gid))
+						 (stories (asana-get-task-stories task-gid)))
+				(org-narrow-to-subtree)
+				(asana-task-org-sync props stories)
+				(widen)
+				(org-element-cache-reset)
+				(org-indent-indent-buffer)))))
 
 (provide 'asana)
 ;;; asana.el ends here
