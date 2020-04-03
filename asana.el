@@ -413,14 +413,18 @@ DATA is a list parsed from the JSON API response."
   (let ((closed (eq (map-elt task 'completed) t))
         (has-schedule (map-elt task 'start_on))
         (has-deadline (map-elt task 'due_on))
+        (has-parent (map-elt task 'parent))
 				(tags (map-elt task 'tags))
         (notes (map-elt task 'notes))
         (liked (eq (map-elt task 'liked) t))
         (hearted (eq (map-elt task 'hearted) t)))
     (insert
      (format
-      "%s%s\n"
+      "%s%s%s\n"
       (map-elt task 'name)
+			(if has-parent
+					(concat " ❬ " (map-nested-elt task '(parent name)))
+				"")
       (if tags
           (format
 					 "   %s:"
@@ -474,6 +478,12 @@ DATA is a list parsed from the JSON API response."
     (insert (format ":WORKSPACE: %s\n" (map-nested-elt task '(workspace name))))
     (insert (format ":ASSIGNEE: %s\n" (map-nested-elt task '(assignee name))))
     (insert (format ":ASSIGNEE_STATUS: %s\n" (map-elt task 'assignee_status)))
+		(when has-parent
+			(insert
+			 (format
+				":PARENT_ID: %s-%s\n"
+				(map-nested-elt task '(workspace gid))
+				(map-nested-elt task '(parent gid)))))
     (when hearted (insert (format ":HEARTS: %d\n" (map-elt task 'num_hearts))))
     (when liked (insert (format ":LIKES: %d\n" (map-elt task 'num_likes))))
     (insert ":PROJECTS: ")
