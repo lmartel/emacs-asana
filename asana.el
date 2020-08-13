@@ -576,7 +576,7 @@ DATA is a list parsed from the JSON API response."
 							 (progress-reporter-update reporter fetched)
 							 (when (= fetched to-fetch)
 								 (progress-reporter-done reporter)
-								 (funcall callback (map-into tasks 'list)))))
+								 (funcall callback (map-into tasks 'alist)))))
 			(seq-doseq (task-gid (map-keys tasks))
 				(let ((asana-get-async-error-handler
 							 (lambda (_)
@@ -586,13 +586,13 @@ DATA is a list parsed from the JSON API response."
 					 task-gid
 					 (lambda (props)
 						 (when (map-contains-key tasks task-gid)
-							 (map-put (map-elt tasks task-gid) 'props props))
+							 (setf (map-elt (map-elt tasks task-gid) 'props) props))
 						 (check-done)))
 					(asana-get-task-stories
 					 task-gid
 					 (lambda (stories)
 						 (when (map-contains-key tasks task-gid)
-							 (map-put (map-elt tasks task-gid) 'stories stories))
+							 (setf (map-elt (map-elt tasks task-gid) 'stories) stories))
 						 (check-done))))))))
 
 (defun asana-tasks-org-digest (tasks)
@@ -606,8 +606,8 @@ DATA is a list parsed from the JSON API response."
 		(goto-char (point-max))
 		(newline 2)
 		(insert "* Asana"))
-  (seq-doseq (task tasks)
-    (asana-task-org-sync (map-elt task 'props) (map-elt task 'stories)))
+  (seq-doseq (task (map-values tasks))
+		(asana-task-org-sync (map-elt task 'props) (map-elt task 'stories)))
   (org-element-cache-reset)
   (org-indent-indent-buffer)
   (org-sort-entries nil ?r nil nil "CREATED_AT")
