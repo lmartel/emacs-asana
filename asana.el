@@ -429,7 +429,7 @@ DATA is a list parsed from the JSON API response."
           (format
 					 "   %s:"
 					 (apply 'concat
-									(seq-map (lambda (tag) (concat ":" (map-elt tag 'name))) tags)))
+									(seq-map (lambda (tag) (concat ":" (string-replace " " "_" (map-elt tag 'name)))) tags)))
 				"")))
 		(if tags (org-align-tags))
     (insert
