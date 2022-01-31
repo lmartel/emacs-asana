@@ -413,19 +413,23 @@ DATA is a list parsed from the JSON API response."
   (let ((closed (eq (map-elt task 'completed) t))
         (has-schedule (map-elt task 'start_on))
         (has-deadline (map-elt task 'due_on))
+        (has-parent (map-elt task 'parent))
 				(tags (map-elt task 'tags))
         (notes (map-elt task 'notes))
         (liked (eq (map-elt task 'liked) t))
         (hearted (eq (map-elt task 'hearted) t)))
     (insert
      (format
-      "%s%s\n"
+      "%s%s%s\n"
       (map-elt task 'name)
+			(if has-parent
+					(concat " ❬ " (map-nested-elt task '(parent name)))
+				"")
       (if tags
           (format
 					 "   %s:"
 					 (apply 'concat
-									(seq-map (lambda (tag) (concat ":" (map-elt tag 'name))) tags)))
+									(seq-map (lambda (tag) (concat ":" (string-replace " " "_" (map-elt tag 'name)))) tags)))
 				"")))
 		(if tags (org-align-tags))
     (insert
@@ -474,27 +478,42 @@ DATA is a list parsed from the JSON API response."
     (insert (format ":WORKSPACE: %s\n" (map-nested-elt task '(workspace name))))
     (insert (format ":ASSIGNEE: %s\n" (map-nested-elt task '(assignee name))))
     (insert (format ":ASSIGNEE_STATUS: %s\n" (map-elt task 'assignee_status)))
-    (when hearted (insert (format ":HEARTS: %d\n" (map-elt task 'num_hearts))))
-    (when liked (insert (format ":LIKES: %d\n" (map-elt task 'num_likes))))
-    (insert ":PROJECTS: ")
-    (seq-map (lambda (p)
-               (insert (format "%s, "(map-elt p 'name))))
-             (map-elt task 'projects))
-    (insert "\n")
-    (insert ":MEMBERSHIPS: ")
-    (seq-doseq (m (map-elt task 'memberships))
-      (insert (format "%s, "(map-nested-elt m '(project name)))))
-    (insert "\n")
-    (insert ":FOLLOWERS: ")
-    (seq-doseq (f (map-elt task 'followers))
-      (insert (format "%s, " (map-elt f 'name))))
-    (insert "\n")
-    (seq-doseq (f (map-elt task 'custom_fields))
-      (when (map-elt f 'enabled)
-        (insert (format ":CUSTOM_%s: %s\n"
-                        (replace-regexp-in-string
-                         " " "_" (upcase (substring (map-elt f 'name) 1)))
-                        (map-nested-elt f '(enum_value name))))))
+		(when has-parent
+			(insert
+			 (format
+				":PARENT_ID: %s-%s\n"
+				(map-nested-elt task '(workspace gid))
+				(map-nested-elt task '(parent gid)))))
+    (when hearted
+			(insert (format ":HEARTS: %d\n" (map-elt task 'num_hearts))))
+    (when liked
+			(insert (format ":LIKES: %d\n" (map-elt task 'num_likes))))
+		(when-let* ((projects (map-elt task 'projects))
+								(not (null projects)))
+			(insert ":PROJECTS: ")
+			(seq-map (lambda (p) (insert (format "%s, " (map-elt p 'name))))
+							 projects)
+			(insert "\n"))
+    (when-let* ((memberships (map-elt task 'memberships))
+								(not (null memberships)))
+			(insert ":MEMBERSHIPS: ")
+			(seq-doseq (m memberships)
+				(insert (format "%s, " (map-nested-elt m '(project name)))))
+			(insert "\n"))
+		(when-let* ((followers (map-elt task 'followers))
+								(not (null followers)))
+			(insert ":FOLLOWERS: ")
+			(seq-doseq (f followers)
+				(insert (format "%s, " (map-elt f 'name))))
+			(insert "\n"))
+		(when-let* ((custom_fields (seq-filter (lambda (f) (map-elt f 'enabled))
+																					 (map-elt task 'custom_fields)))
+								(not (null custom_fields)))
+			(seq-doseq (f custom_fields)
+				(insert (format ":CUSTOM_%s: %s\n"
+												(replace-regexp-in-string
+												 " " "_" (upcase (substring (map-elt f 'name) 1)))
+												(map-nested-elt f '(enum_value name))))))
     (insert ":END:\n")
     (insert ":LOGBOOK:\n")
     (seq-doseq (entry (reverse stories))
@@ -557,7 +576,7 @@ DATA is a list parsed from the JSON API response."
 							 (progress-reporter-update reporter fetched)
 							 (when (= fetched to-fetch)
 								 (progress-reporter-done reporter)
-								 (funcall callback (map-into tasks 'list)))))
+								 (funcall callback (map-into tasks 'alist)))))
 			(seq-doseq (task-gid (map-keys tasks))
 				(let ((asana-get-async-error-handler
 							 (lambda (_)
@@ -567,13 +586,13 @@ DATA is a list parsed from the JSON API response."
 					 task-gid
 					 (lambda (props)
 						 (when (map-contains-key tasks task-gid)
-							 (map-put (map-elt tasks task-gid) 'props props))
+							 (setf (map-elt (map-elt tasks task-gid) 'props) props))
 						 (check-done)))
 					(asana-get-task-stories
 					 task-gid
 					 (lambda (stories)
 						 (when (map-contains-key tasks task-gid)
-							 (map-put (map-elt tasks task-gid) 'stories stories))
+							 (setf (map-elt (map-elt tasks task-gid) 'stories) stories))
 						 (check-done))))))))
 
 (defun asana-tasks-org-digest (tasks)
@@ -587,8 +606,8 @@ DATA is a list parsed from the JSON API response."
 		(goto-char (point-max))
 		(newline 2)
 		(insert "* Asana"))
-  (seq-doseq (task tasks)
-    (asana-task-org-sync (map-elt task 'props) (map-elt task 'stories)))
+  (seq-doseq (task (map-values tasks))
+		(asana-task-org-sync (map-elt task 'props) (map-elt task 'stories)))
   (org-element-cache-reset)
   (org-indent-indent-buffer)
   (org-sort-entries nil ?r nil nil "CREATED_AT")
@@ -612,8 +631,7 @@ DATA is a list parsed from the JSON API response."
 						 (save-excursion (org-insert-heading-respect-content))
 						 (org-cut-special)
 						 (end-of-line))
-						(t (goto-char (point-max))
-							 (org-insert-heading-respect-content)))
+						(t (org-insert-subheading nil)))
 			(asana-task-insert-as-org task stories)
       (org-back-to-heading)
 			(if (eq (map-elt task 'completed) t)
