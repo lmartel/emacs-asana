@@ -14,44 +14,35 @@ exec-path-from-shell
 
 ## Getting Started
 
-Add this to your `.bash_profile` (or wherever you keep your environment):
+Get a Personal Access Token from the `apps' tab in your app.asana.com profile settings.
+
+Set `asana-token`:
+
+```elisp
+(setq asana-token "<my-asana-personal-access-token>")
+```
+
+Or set the environment variable `asana-token-env-var` (default: `ASANA_TOKEN`):
 
 ```bash
-# Get a Personal Access Token from the `apps' tab in your app.asana.com profile settings.
-export ASANA_TOKEN="<my-asana-personal-access-token>" 
+export ASANA_TOKEN="<my-asana-personal-access-token>"
 ```
-
-Add this to your `init.el`:
-```elisp
-(global-asana-mode 1)
-;; or, if you prefer, use it in specific major modes:
-;; (add-hook 'org-mode-hook 'asana-mode)
-;; (add-hook 'prog-mode-hook 'asana-mode)
-;; (add-hook 'text-mode-hook 'asana-mode)
-```
-
-### Configuration
-
-[Optional] The default prefix for `asana-mode` commands is `C-c a`. To change it, add this to your `init.el`:
-```elisp
-(setq asana-keymap-prefix "C-c C-a") ; Or whatever you'd like to use as your prefix
-```
-
-[Optional] By default, `asana-mode` loads tasks from your "My Tasks" list in your chosen workspace. To load tasks from a project instead, customize the variable `asana-my-tasks-project-id` with the project ID (the first long number in the URL of the project, or any task in that project) **after** choosing a workspace with `C-c a`.
 
 ### Available commands
 
-In the `asana-mode` minor mode, the following interactive commands are available:
-
 ```elisp
-helm-asana [C-c a a]
-helm-asana-change-workspace [C-c a A]
+asana-default-workspace-change
+asana-create-task
+asana-create-task-quickly
 
-asana-create-task-quickly [C-c a c]
-asana-create-task [C-c a C]
+asana-helm
+asana-helm-my-tasks
+
+asana-org-sync-tasks
+asana-org-sync-task-at-point
 ```
 
-The `helm-asana` task list provides these actions:
+The `asana-helm` task list provides these actions:
 ```
 Select (view task details in buffer) [RET]
 Browse (open in Asana) [C-b]
@@ -74,4 +65,3 @@ OSX El Capitan can break `exec-path-from-shell`, which corrupts your access toke
 - Improve error messages, for example around ASANA_TOKEN not found
 - Improve/add docstrings
 - Publish v1.0 as package
-- Command to choose another project, rather than needing to copy/paste an ID
