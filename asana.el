@@ -761,7 +761,7 @@ Returns list of selected candidates values."
 
 ;;;###autoload
 (defun asana-default-workspace-change (workspace)
-  "Set and save WORKSPACE as selected."
+  "Set and save `asana-default-workspace' as WORKSPACE."
 	(interactive
 	 (let* ((wss (map-elt (asana-get "/users/me") 'workspaces))
 					(candidates (mapcar (lambda (workspace) `(,(map-elt workspace 'name) . ,workspace))
@@ -774,6 +774,20 @@ Returns list of selected candidates values."
 		(customize-save-variable
 		 'asana-default-workspace
 		 (cons (map-elt workspace 'name) (map-elt workspace 'gid)))))
+
+;;;###autoload
+(defun asana-workspace-change (workspace)
+  "Set `asana-current-workspace' as WORKSPACE."
+	(interactive
+	 (let* ((wss (map-elt (asana-get "/users/me") 'workspaces))
+					(candidates (mapcar (lambda (workspace) `(,(map-elt workspace 'name) . ,workspace))
+															wss)))
+		 (list
+			(map-elt
+			 candidates
+			 (completing-read "Workspace: " candidates nil t)))))
+	(when workspace
+		(setq asana-current-workspace workspace)))
 
 ;;;###autoload
 (defun asana-create-task (task-name &optional description)
