@@ -390,7 +390,7 @@ Task stories are comments, edit history, etc."
 
 (defun asana-org-task-insert (task stories)
   "Insert an org-formatted Asana TASK with STORIES into the current buffer."
-	(eval-and-compile (require 'org))
+	(require 'org)
   (let ((workspace-gid (map-nested-elt task '(workspace gid)))
 				(task-gid (map-elt task 'gid))
 				(closed (eq (map-elt task 'completed) t))
@@ -499,19 +499,22 @@ Task stories are comments, edit history, etc."
         "- %s (%s)\n"
         (format-time-string "[%Y-%m-%d %a %H:%M]" (date-to-time (map-elt entry 'created_at)))
         (map-elt entry 'type)))
-      (let ((p (point))
-						(fill-prefix "  ")
-						(txt (map-elt entry 'text))
+      (let ((txt (map-elt entry 'text))
+						link
+						idx
 						gid)
-        (insert
-         (format "  %s" (replace-regexp-in-string "\n" "\n  " txt)))
-        (fill-region p (point) nil nil nil)
-				(while (re-search-backward "https://app.asana.com/0/\\([^/]+\\)/?\\w+" p t)
-					(setq gid (match-string 1)
-								txt (replace-match
-										 (format "[[http://app.asana.com/0/%s][%s]]" gid
+				(while (string-match "https://app.asana.com/0/\\([^/]+\\)/?\\w+" txt idx)
+					(setq gid (match-string 1 txt)
+								link (format "[[http://app.asana.com/0/%s][%s]]" gid
 														 (or (map-nested-elt asana-workspace-refs (list workspace-gid gid)) gid))
-										 t t))))
+								txt (replace-match link t t txt)
+								idx (+ (match-beginning 0) (length link))))
+        (let ((p (point))
+							(fill-prefix "  "))
+					(insert
+					 (format "  %s" (replace-regexp-in-string "\n" "\n  " txt)))
+					(fill-region p (point) nil nil nil))
+				)
       (insert "\n"))
     (insert ":END:\n")
 		(when notes
