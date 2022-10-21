@@ -305,13 +305,13 @@ Task stories are comments, edit history, etc."
 (defun asana-task-complete (task-gid)
   "Complete an Asana task by TASK-GID."
   (asana-put
-	 (format "/tasks/%s" task-gid)
-   '((completed . t))
-   (lambda (data)
-     (let ((task-name (map-elt data 'name)))
-       (if (assoc 'completed data)
-           (message "`%s' completed." task-name)
-         (message "Unknown error: couldn't complete `%s'" task-name))))))
+			(format "/tasks/%s" task-gid)
+		'((completed . t))
+		(lambda (data)
+			(let ((task-name (map-elt data 'name)))
+				(if (assoc 'completed data)
+						(message "`%s' completed." task-name)
+					(message "Unknown error: couldn't complete `%s'" task-name))))))
 
 (defun asana-task-delete (task-gid)
   "Delete an Asana task by TASK-GID."
@@ -499,24 +499,23 @@ Task stories are comments, edit history, etc."
         "- %s (%s)\n"
         (format-time-string "[%Y-%m-%d %a %H:%M]" (date-to-time (map-elt entry 'created_at)))
         (map-elt entry 'type)))
-      (let ((txt (map-elt entry 'text))
-						link
-						idx
-						gid)
+      (let ((content-start (point))
+						(txt (map-elt entry 'text))
+						(fill-prefix "  ")
+						desc link idx gid)
 				(while (string-match "https://app.asana.com/0/\\([^/]+\\)/?\\w+" txt idx)
 					(setq gid (match-string 1 txt)
-								link (format "[[http://app.asana.com/0/%s][%s]]" gid
-														 (or (map-nested-elt asana-workspace-refs (list workspace-gid gid)) gid))
-								txt (replace-match link t t txt)
-								idx (+ (match-beginning 0) (length link))))
-        (let ((p (point))
-							(fill-prefix "  "))
-					(insert
-					 (format "  %s" (replace-regexp-in-string "\n" "\n  " txt)))
-					(fill-region p (point) nil nil nil))
-				)
-      (insert "\n"))
-    (insert ":END:\n")
+								desc (or (map-nested-elt asana-workspace-refs (list workspace-gid gid)) gid))
+					(put-text-property 0 (length desc) 'invisible t desc) ;; prevents filling links at eol
+					(setq
+					 link (org-link-make-string (format "http://app.asana.com/0/%s" gid) desc)
+					 txt (replace-match link t t txt)
+					 idx (+ (match-beginning 0) (length link))))
+				(insert
+				 (format "  %s" (replace-regexp-in-string "\n" "\n  " txt t)))
+				(fill-region content-start (point)))
+			(insert "\n"))
+		(insert ":END:\n")
 		(when notes
 			(newline-and-indent)
 			(dolist (p (split-string
