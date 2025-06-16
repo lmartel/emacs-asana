@@ -122,13 +122,16 @@ Asana free plan limit is 50. Asana premium plan limit is 1500."
 	(unless (map-elt asana-workspace-refs workspace-gid)
 		(let ((hm (make-hash-table :test 'equal)))
 			(message "Fetching user names...")
-			(seq-doseq (user (asana-get "/users"))
+			(seq-doseq (user (asana-get "/users"
+				`((workspace ,workspace-gid))))
 				(map-put! hm (map-elt user 'gid) (map-elt user 'name)))
 			(message "Fetching tag names...")
-			(seq-doseq (tag (asana-get "/tags"))
+			(seq-doseq (tag (asana-get "/tags"
+				`((workspace ,workspace-gid))))
 				(map-put! hm (map-elt tag 'gid) (map-elt tag 'name)))
 			(message "Fetching project names...")
-			(seq-doseq (project (asana-get "/projects"))
+			(seq-doseq (project (asana-get "/projects"
+				`((workspace ,workspace-gid))))
 				(map-put! hm (map-elt project 'gid) (map-elt project 'name)))
 			(setf (map-elt asana-workspace-refs workspace-gid) hm))))
 
