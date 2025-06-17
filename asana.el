@@ -586,8 +586,8 @@ Task stories are comments, edit history, etc."
 
 ;; Helm
 
-(defvar helm-map)
-(defvar helm-alive-p)
+(defvar helm-map nil)
+(defvar helm-alive-p nil)
 
 (defvar asana-helm-selected-workspace nil)
 (define-inline asana-helm-workspace-gid ()
