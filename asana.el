@@ -586,9 +586,6 @@ Task stories are comments, edit history, etc."
 
 ;; Helm
 
-(defvar helm-map)
-(defvar helm-alive-p)
-
 (defvar asana-helm-selected-workspace nil)
 (define-inline asana-helm-workspace-gid ()
 	(inline-quote
@@ -722,39 +719,40 @@ Returns list of selected candidates values."
 						(truncate-string-to-width (map-elt task 'name) max-len 0 ?\s "…")
 						(propertize (or (map-elt task 'due_on) "") 'face 'warning))))
 
-(defvar asana-helm-tasks-keymap
-	(let ((map (make-sparse-keymap)))
-		(set-keymap-parent map helm-map)
-		(asana-helm-define-exit-actions map
-			(kbd "C-b") (asana-helm-with-candidate-gid (asana-task-browse gid))
-			(kbd "<C-return>") (asana-helm-with-candidate-gid (asana-task-complete gid))
-			(kbd "<C-backspace>") (asana-helm-with-candidate-gid (asana-task-delete gid))
-			(kbd "<M-return>") (asana-helm-foreach-candidate c (asana-task-complete c))
-			(kbd "<M-backspace>") (asana-helm-foreach-candidate c (asana-task-delete c))
-			(kbd "C-]") (lambda (_)
-										(setq asana-helm-show-completed-tasks (not asana-helm-show-completed-tasks))
-										(asana-helm))
-			(kbd "C-:") (lambda (_)
-										(asana-helm-tasks-move-to-section
-										 (mapcar (lambda (c) (map-elt c 'gid)) (helm-marked-candidates)))))
-		map))
+(with-eval-after-load 'helm-core
+	(defvar asana-helm-tasks-keymap
+		(let ((map (make-sparse-keymap)))
+			(set-keymap-parent map helm-map)
+			(asana-helm-define-exit-actions map
+				(kbd "C-b") (asana-helm-with-candidate-gid (asana-task-browse gid))
+				(kbd "<C-return>") (asana-helm-with-candidate-gid (asana-task-complete gid))
+				(kbd "<C-backspace>") (asana-helm-with-candidate-gid (asana-task-delete gid))
+				(kbd "<M-return>") (asana-helm-foreach-candidate c (asana-task-complete c))
+				(kbd "<M-backspace>") (asana-helm-foreach-candidate c (asana-task-delete c))
+				(kbd "C-]") (lambda (_)
+											(setq asana-helm-show-completed-tasks (not asana-helm-show-completed-tasks))
+											(asana-helm))
+				(kbd "C-:") (lambda (_)
+											(asana-helm-tasks-move-to-section
+											 (mapcar (lambda (c) (map-elt c 'gid)) (helm-marked-candidates)))))
+			map))
 
-(cl-defun asana-helm--task-make-source (&rest plist &key
-																							(query)
-																							(keymap asana-helm-tasks-keymap)
-																							(display 'asana-helm--task-format)
-																							(fields '("name" "due_on"))
-																							action
-																							&allow-other-keys)
-	(apply
-	 #'asana-helm-resource
-	 "tasks"
-	 :query (map-merge 'alist (if asana-helm-show-completed-tasks nil '((completed_since "now"))) query)
-	 :keymap keymap
-	 :display display
-	 :fields fields
-	 :action (or action (helm-make-actions "Show" (asana-helm-with-candidate-gid (asana-task-display gid))))
-	 plist))
+	(cl-defun asana-helm--task-make-source (&rest plist &key
+																								(query)
+																								(keymap asana-helm-tasks-keymap)
+																								(display 'asana-helm--task-format)
+																								(fields '("name" "due_on"))
+																								action
+																								&allow-other-keys)
+		(apply
+		 #'asana-helm-resource
+		 "tasks"
+		 :query (map-merge 'alist (if asana-helm-show-completed-tasks nil '((completed_since "now"))) query)
+		 :keymap keymap
+		 :display display
+		 :fields fields
+		 :action (or action (helm-make-actions "Show" (asana-helm-with-candidate-gid (asana-task-display gid))))
+	 plist)))
 
 ;; Interactive
 
